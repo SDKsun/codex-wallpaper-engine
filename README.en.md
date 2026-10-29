@@ -13,6 +13,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - Original library, appearance, playback, system, extensions and about tabs, presets and rotation.
 - Configurable glass, fonts, color and positioning; a single transparent composer surface.
 - Separate glass surfaces for Library/Sites, Automations, Plugins/Skills and menus, with local contrast and automatic cleanup on page changes.
+- The chat project summary card follows sidebar glass settings, with one background layer, readable sections and preserved scrolling.
 - Optional system audio spectrum and Now Playing through a pinned, checksum-verified official media helper.
 - Explicit first-run restart confirmation, pause and appearance restoration.
 

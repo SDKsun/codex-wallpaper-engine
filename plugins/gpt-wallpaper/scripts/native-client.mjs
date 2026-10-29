@@ -128,6 +128,13 @@ export function buildCodexGlassCss(selection = {}) {
   }
   if(policy['settings-window']!=='native')rules.push(glass(`${scope}[data-we-glass-window] #codex-we-native-settings`,'var(--codex-we-native-tint)','var(--we-settings-window-alpha,var(--we-glass-alpha,0.15))','var(--we-settings-window-blur,var(--we-blur,16px))'));
   if(policy['right-sidebar']!=='native'){
+    if(selection.sidebarGlass===true||selection.sidebarFullClear===true){
+      const summary=`${scope}:is([data-we-sidebar-glass],[data-we-sidebar-fullclear]) [data-codex-we-surface="right-sidebar"][data-summary-panel-variant="summary"]`;
+      rules.push(`${summary}{--color-text-secondary:color-mix(in srgb,var(--color-text) 78%,transparent);--color-text-tertiary:color-mix(in srgb,var(--color-text) 65%,transparent)}`);
+      // Native section headers each paint a separate sticky surface plus an
+      // eight-pixel pseudo-element. Keep one glass layer on the summary card.
+      rules.push(`${summary} header[class~="bg-surface-elevated-secondary"],${summary} header[class~="bg-surface-elevated-secondary"]::before{background-color:transparent!important;background-image:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}`);
+    }
     if(selection.sidebarFullClear===true)rules.push(`${scope}[data-we-sidebar-fullclear] [data-codex-we-surface="right-sidebar"],${scope}[data-we-sidebar-fullclear] [data-codex-we-surface="right-content"]{background:transparent!important;backdrop-filter:none!important}`);
     else if(selection.sidebarGlass===true){
       rules.push(`${scope}[data-we-sidebar-glass] [data-codex-we-surface="right-sidebar"]{background-color:color-mix(in srgb,var(--we-readability-base,#101418) calc(var(--we-readability-floor,0.15)*100%),color-mix(in srgb,var(--we-sidebar-color,#ffffff) var(--we-sidebar-tint,20%),transparent) calc((1 - var(--we-readability-floor,0.15))*100%))!important;background-image:linear-gradient(180deg,rgba(255,255,255,calc(var(--we-sidebar-sheen,1)*0.14)),rgba(255,255,255,calc(var(--we-sidebar-sheen,1)*0.04)) 38%,rgba(255,255,255,calc(var(--we-sidebar-sheen,1)*0.01)))!important;backdrop-filter:blur(var(--we-sidebar-blur,16px)) saturate(var(--we-sidebar-saturate,1.8))!important}`);
@@ -386,7 +393,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     function __surfaces(){
       const shell='main:is(.main-surface,[data-app-shell-main-surface],[class*="_MainContentSurface_"])';
       const right=shell+' div[class~="bg-token-main-surface-primary"][class~="border-l"]';
-      const groups=[['main',shell],['sidebar','aside.app-shell-left-panel'],['header','header:is(.app-header-tint,[data-app-shell-header-edge-scroll],[class*="_Header_"])'],['thread','.thread-scroll-container'],['composer-shell','[data-codex-composer-root]'],['composer-content','[data-codex-composer-root] :is([class*="_ComposerLayoutBody_"],[class*="_ComposerLayoutInput_"],[data-composer-body])'],['composer-backdrop','[data-thread-scroll-footer] > div[class*="_background_"][class~="pointer-events-none"][class~="absolute"]'],['right-sidebar',right],['right-content',right+' :is(div,section,aside)[class~="bg-token-main-surface-primary"]']];
+      const groups=[['main',shell],['sidebar','aside.app-shell-left-panel'],['header','header:is(.app-header-tint,[data-app-shell-header-edge-scroll],[class*="_Header_"])'],['thread','.thread-scroll-container'],['composer-shell','[data-codex-composer-root]'],['composer-content','[data-codex-composer-root] :is([class*="_ComposerLayoutBody_"],[class*="_ComposerLayoutInput_"],[data-composer-body])'],['composer-backdrop','[data-thread-scroll-footer] > div[class*="_background_"][class~="pointer-events-none"][class~="absolute"]'],['right-sidebar',right],['right-sidebar','main [data-summary-panel-variant="summary"][data-summary-panel-density]'],['right-content',right+' :is(div,section,aside)[class~="bg-token-main-surface-primary"]']];
       const mark=(node,kind)=>{if(!__surfaceRecords.has(node))__surfaceRecords.set(node,{before:node.getAttribute('data-codex-we-surface'),written:kind});else __surfaceRecords.get(node).written=kind;node.setAttribute('data-codex-we-surface',kind);};
       for(const[kind,selector]of groups)for(const node of __doc.querySelectorAll(selector))mark(node,kind);
       const cards=[...__doc.querySelectorAll('[class*="_ComposerLayoutRoot_"]')];
