@@ -10,6 +10,7 @@ import {engineHealth} from './health.mjs';
 import {launchIndependent} from './detached-windows.mjs';
 import {resolveSharedLocal} from './paths.mjs';
 import {SERVICE_REVISION} from './service-version.mjs';
+import {restoreStartupAssistant} from './startup-assistant.mjs';
 
 const run = promisify(execFile);
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -199,7 +200,7 @@ export async function rotate(token) {
 
 export const tool = {
   name:'wallpaper_control',
-  description:'控制 Windows GPT 动态壁纸：打开可视化壁纸库，自动连接 Wallpaper Engine，列出场景并按名称或 ID 实时切换，控制图片/视频、透出度、暂停和轮播。不会自动重启 GPT；配置保存不等于聊天界面渲染成功。',
+  description:'控制 Windows GPT 动态壁纸：打开可视化壁纸库，自动连接 Wallpaper Engine，列出场景并按名称或 ID 实时切换，控制图片/视频、透出度、暂停和轮播。自动重新接入需单独启用常驻启动助手；配置保存不等于聊天界面渲染成功。',
   inputSchema:{type:'object',properties:{action:{type:'string',enum:actions},path:{type:'string'},percent:{type:'integer',minimum:0,maximum:100},themeId:{type:'string'},folder:{type:'string'},seconds:{type:'integer',minimum:30,maximum:86400}},required:['action'],additionalProperties:false},
   annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false}
 };
@@ -242,7 +243,7 @@ async function main() {
   const rl = readline.createInterface({input:process.stdin,crlfDelay:Infinity});
   for await (const line of rl) {
     let response;
-    try {if (line.length > 1024*1024) throw new Error();const message=JSON.parse(line);if(message.method === 'initialize')void restoreSceneService().catch(()=>{});response=await dispatch(message);}
+    try {if (line.length > 1024*1024) throw new Error();const message=JSON.parse(line);if(message.method === 'initialize'){void restoreSceneService().catch(()=>{});void restoreStartupAssistant().catch(()=>{});}response=await dispatch(message);}
     catch {response={jsonrpc:'2.0',id:null,error:{code:-32700,message:'Parse error'}};}
     if (response) process.stdout.write(JSON.stringify(response)+'\n');
   }

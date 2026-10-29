@@ -578,7 +578,7 @@ index 5552cbd..bb6987b 100644
  
 diff --git a/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
 new file mode 100644
-index 0000000..0bd9017
+index 0000000..991f803
 --- /dev/null
 +++ b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
 @@ -0,0 +1,357 @@
@@ -679,7 +679,7 @@ index 0000000..0bd9017
 +    await startCodex().ConfigureAwait(false);
 +  }
 +
-+  private static async Task EnsureLibraryAsync(RuntimeProvisioner runtime)
++  internal static async Task EnsureLibraryAsync(RuntimeProvisioner runtime)
 +  {
 +    var pluginRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
 +    var script = Path.Combine(pluginRoot, "scripts", "server.mjs");
@@ -1226,13 +1226,23 @@ index 55f8d61..ca24103 100644
    }
  }
 diff --git a/windows/app/CodexDreamSkin.Manager/Program.cs b/windows/app/CodexDreamSkin.Manager/Program.cs
-index af8029e..0030677 100644
+index af8029e..9b98c11 100644
 --- a/windows/app/CodexDreamSkin.Manager/Program.cs
 +++ b/windows/app/CodexDreamSkin.Manager/Program.cs
-@@ -10,6 +10,17 @@ internal static class Program
+@@ -5,14 +5,35 @@ namespace CodexDreamSkin.Manager;
+ internal static class Program
+ {
+   private const string MutexName = @"Local\CodexDreamSkin.Manager";
++  private const string ShowManagerEventName = @"Local\CodexDreamSkin.Manager.Show";
+   private const string ProductName = "Codex 动态壁纸";
+ 
    [STAThread]
    private static int Main(string[] args)
    {
++    if (args.Contains("--assistant-self-test", StringComparer.OrdinalIgnoreCase))
++      return StartupAssistant.SelfTest() ? 0 : 7;
++    if (args.Contains("--assistant", StringComparer.OrdinalIgnoreCase))
++      return StartupAssistant.Run();
 +    // A normal Codex shortcut must still work while its settings manager is
 +    // already in the tray. This mode owns a separate, short-lived launch gate.
 +    if (args.Contains("--launch-self-test", StringComparer.OrdinalIgnoreCase))
@@ -1247,7 +1257,38 @@ index af8029e..0030677 100644
      using var mutex = new Mutex(true, MutexName, out var createdNew);
      if (!createdNew && !args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
      {
-@@ -43,12 +54,10 @@ internal static class Program
++      if (EventWaitHandle.TryOpenExisting(ShowManagerEventName, out var existing))
++      {
++        using (existing) existing.Set();
++        return 0;
++      }
+       MessageBox.Show(
+         $"{ProductName}已经在运行，请查看任务栏托盘。",
+         ProductName,
+@@ -38,17 +59,32 @@ internal static class Program
+       var settings = new SettingsStore();
+       var service = new DreamSkinService(runtime);
+       var minimized = args.Contains("--minimized", StringComparer.OrdinalIgnoreCase);
+-      Application.Run(new MainForm(service, settings, minimized));
++      using var form = new MainForm(service, settings, minimized);
++      using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowManagerEventName);
++      var showRegistration = ThreadPool.RegisterWaitForSingleObject(showEvent, (_, _) =>
++      {
++        try
++        {
++          if (form.IsDisposed || !form.IsHandleCreated) return;
++          form.BeginInvoke((Action)(() =>
++          {
++            form.Show();
++            if (form.WindowState == FormWindowState.Minimized) form.WindowState = FormWindowState.Normal;
++            form.Activate();
++          }));
++        }
++        catch (InvalidOperationException) { }
++      }, null, Timeout.Infinite, executeOnlyOnce: false);
++      try { Application.Run(form); }
++      finally { showRegistration.Unregister(null); }
+       return 0;
      }
      catch (Exception exception)
      {
@@ -1262,12 +1303,13 @@ index af8029e..0030677 100644
          Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
          File.AppendAllText(logPath, $"[{DateTimeOffset.Now:O}] {exception}\r\n");
        }
-@@ -86,7 +95,11 @@ internal static class SelfTest
+@@ -86,7 +122,12 @@ internal static class SelfTest
        {
          return 3;
        }
 -      return RunnerReturnsAfterParentExit(runtime) ? 0 : 5;
-+      return CodexLauncher.SelfTest() && CodexLauncher.RunnerSelfTest(runtime) &&
++      return StartupAssistant.SelfTest() && StartupAssistant.HelperRuntimeSelfTest() &&
++        CodexLauncher.SelfTest() && CodexLauncher.RunnerSelfTest(runtime) &&
 +        RunnerSharesStateDirectory(runtime) && RunnerReturnsAfterParentExit(runtime, false) &&
 +        RunnerReturnsAfterParentExit(runtime, true) &&
 +        RunnerReturnsAfterParentExit(runtime, true, inheritedChildOutput: true) &&
@@ -1275,7 +1317,7 @@ index af8029e..0030677 100644
      }
      catch
      {
-@@ -94,7 +107,28 @@ internal static class SelfTest
+@@ -94,7 +135,28 @@ internal static class SelfTest
      }
    }
  
@@ -1305,7 +1347,7 @@ index af8029e..0030677 100644
    {
      var temporary = Path.Combine(
        Path.GetTempPath(),
-@@ -104,9 +138,42 @@ internal static class SelfTest
+@@ -104,9 +166,42 @@ internal static class SelfTest
      int? childProcessId = null;
      try
      {
@@ -1349,7 +1391,7 @@ index af8029e..0030677 100644
          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
          $stdout = Join-Path $PSScriptRoot 'child-stdout.log'
          $stderr = Join-Path $PSScriptRoot 'child-stderr.log'
-@@ -116,6 +183,7 @@ internal static class SelfTest
+@@ -116,6 +211,7 @@ internal static class SelfTest
          ) -WindowStyle Hidden -PassThru `
            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
          Set-Content -LiteralPath $pidFile -Value $child.Id -Encoding Ascii
@@ -1357,7 +1399,7 @@ index af8029e..0030677 100644
          """,
          new System.Text.UTF8Encoding(false));
  
-@@ -126,7 +194,7 @@ internal static class SelfTest
+@@ -126,7 +222,7 @@ internal static class SelfTest
            script,
            Array.Empty<string>(),
            cancellation.Token,
@@ -1366,7 +1408,7 @@ index af8029e..0030677 100644
          .GetAwaiter()
          .GetResult();
        stopwatch.Stop();
-@@ -138,7 +206,18 @@ internal static class SelfTest
+@@ -138,7 +234,18 @@ internal static class SelfTest
          childProcessId = parsedProcessId;
        }
  
@@ -1387,7 +1429,7 @@ index af8029e..0030677 100644
          stopwatch.Elapsed < TimeSpan.FromSeconds(3);
      }
 diff --git a/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs b/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
-index ca278bf..620e331 100644
+index ca278bf..aa41222 100644
 --- a/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
 +++ b/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
 @@ -40,7 +40,7 @@ internal sealed class RuntimeProvisioner
@@ -1399,6 +1441,725 @@ index ca278bf..620e331 100644
        "CodexDreamSkin");
      var version = _assembly.GetName().Version?.ToString(3) ?? "1.0.0";
      RuntimeRoot = Path.Combine(StateRoot, "manager-runtime", version);
+@@ -73,6 +73,18 @@ internal sealed class RuntimeProvisioner
+     ValidateExtractedPayload();
+   }
+ 
++  // The resident helper only needs a trusted Node executable and a safe cwd.
++  // Do not rewrite an active watcher's engine payload merely by starting it.
++  public void EnsureHelperRuntime()
++  {
++    EnsureSafeDirectory(StateRoot, StateRoot);
++    EnsureSafeDirectory(Path.Combine(StateRoot, "manager-runtime"), StateRoot);
++    EnsureSafeDirectory(RuntimeRoot, StateRoot);
++    EnsureSafeDirectory(PayloadRoot, StateRoot);
++    foreach (var name in new[] { "Runtime.node.exe", "Runtime.NODE-LICENSE.txt" })
++      ExtractAtomically(ResourcePrefix + name, Path.Combine(RuntimeRoot, ResourceMap[name]));
++  }
++
+   public void ValidateExtractedPayload()
+   {
+     foreach (var relativePath in ResourceMap.Values)
+diff --git a/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
+new file mode 100644
+index 0000000..a1ab24d
+--- /dev/null
++++ b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
+@@ -0,0 +1,694 @@
++using System.Diagnostics;
++using System.Globalization;
++using System.Text;
++using System.Text.Json;
++using System.Text.RegularExpressions;
++
++namespace CodexDreamSkin.Manager;
++
++// Explicitly enabled by the assistant installer. The normal manager and
++// --minimized modes do not enable this monitor or change startup preferences.
++internal static class StartupAssistant
++{
++  private const string Caption = "Codex 自动装扮";
++  private const int MaximumJsonBytes = 64 * 1024;
++  private sealed record Settings(bool Enabled, bool Paused, string Launcher, byte[] Bytes);
++  private sealed record Root(int ProcessId, DateTimeOffset StartedAt, string Kind,
++    double AgeSeconds, bool PlainLaunch, bool VisibleWindow)
++  {
++    public string Key => ProcessId.ToString(CultureInfo.InvariantCulture) + ":" + StartedAt.ToString("O");
++  }
++  private sealed record Snapshot(bool OperationBusy, IReadOnlyList<Root> Roots);
++
++  public static int Run()
++  {
++    using var singleton = new Mutex(false, @"Local\CodexDreamSkin.StartupAssistant");
++    var acquired = false;
++    try
++    {
++      try { acquired = singleton.WaitOne(0); }
++      catch (AbandonedMutexException) { acquired = true; }
++      if (!acquired) return 0;
++      var launcher = Environment.ProcessPath ?? throw new InvalidOperationException();
++      RequirePlainPath(launcher, file: true);
++      var settingsPath = Path.Combine(ManagerLocalData.Root, "GPTWallpaper", "startup-assistant.json");
++      var settings = ReadSettings(settingsPath, launcher);
++      RequireActiveInstallation(Path.Combine(Path.GetDirectoryName(settingsPath)!, "startup-assistant-install.json"), launcher);
++      if (!settings.Enabled) return 0;
++      var bridge = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "scripts", "assistant-command.ps1"));
++      RequirePlainPath(bridge, file: true);
++      var runtime = new RuntimeProvisioner();
++      runtime.EnsureHelperRuntime();
++      Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
++      Application.EnableVisualStyles();
++      Application.SetCompatibleTextRenderingDefault(false);
++      using var context = new MonitorContext(runtime, bridge, settingsPath, launcher);
++      Application.Run(context);
++      return 0;
++    }
++    catch
++    {
++      MessageBox.Show("自动装扮助手未能启动，请打开壁纸设置查看或重新安装助手。Codex 未被接管。",
++        Caption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
++      return 1;
++    }
++    finally { if (acquired) singleton.ReleaseMutex(); }
++  }
++
++  private sealed class MonitorContext : ApplicationContext
++  {
++    private readonly RuntimeProvisioner _runtime;
++    private readonly PowerShellRunner _runner;
++    private readonly string _bridge, _settingsPath, _launcher, _journal, _statusPath;
++    private readonly Controller _controller = new();
++    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
++    private readonly CancellationTokenSource _lifetime = new();
++    private readonly NotifyIcon _tray;
++    private readonly ContextMenuStrip _menu = new();
++    private readonly ToolStripMenuItem _pause = new("暂停自动装扮");
++    private readonly HashSet<string> _reported = new(StringComparer.Ordinal);
++    private Task? _resources;
++    private bool _busy, _takeoverInFlight, _exitRequested, _suppressed, _disposed;
++    private bool? _lastPaused;
++    private int _failures;
++    private DateTimeOffset _nextProbe;
++    private readonly DateTimeOffset _startedAt = new(Process.GetCurrentProcess().StartTime.ToUniversalTime());
++    private Root? _candidate;
++    private int? _lastLauncherExitCode;
++    private string? _lastErrorCode, _lastStatus;
++
++    public MonitorContext(RuntimeProvisioner runtime, string bridge, string settingsPath, string launcher)
++    {
++      _runtime = runtime; _bridge = bridge; _settingsPath = settingsPath; _launcher = launcher;
++      _journal = Path.Combine(ManagerLocalData.Root, "GPTWallpaper", "startup-assistant.log");
++      _statusPath = Path.Combine(ManagerLocalData.Root, "GPTWallpaper", "startup-assistant-status.json");
++      _runner = new PowerShellRunner(runtime);
++      _tray = new NotifyIcon { Icon = SystemIcons.Application, Text = Caption,
++        ContextMenuStrip = _menu, Visible = true };
++      var settings = new ToolStripMenuItem("打开壁纸设置");
++      settings.Click += (_, _) => OpenSettings();
++      _pause.Click += (_, _) => TogglePause();
++      var exit = new ToolStripMenuItem("关闭自动装扮并退出");
++      exit.Click += (_, _) => RequestExit();
++      _menu.Items.AddRange(new ToolStripItem[] { settings, _pause, new ToolStripSeparator(), exit });
++      _tray.DoubleClick += (_, _) => OpenSettings();
++      _timer.Tick += async (_, _) => await TickAsync();
++      Journal("assistant_started");
++      WriteStatus("watching");
++      _timer.Start();
++    }
++
++    private async Task TickAsync()
++    {
++      if (_busy || _exitRequested || DateTimeOffset.UtcNow < _nextProbe) return;
++      _busy = true;
++      try
++      {
++        var settings = CurrentSettings();
++        if (!settings.Enabled) { ExitThread(); return; }
++        _pause.Checked = settings.Paused || _suppressed;
++        _pause.Text = _pause.Checked ? "恢复自动装扮" : "暂停自动装扮";
++        if (_lastPaused != settings.Paused)
++        {
++          if (_lastPaused == true && !settings.Paused) _controller.OnlyFutureLaunches(DateTimeOffset.UtcNow);
++          _lastPaused = settings.Paused;
++          Journal(settings.Paused ? "assistant_paused" : "assistant_ready");
++        }
++        // Resource initialization runs asynchronously while snapshots continue
++        // observing the fresh process window. It never closes or launches Codex.
++        if (!settings.Paused && !_suppressed && _resources is null)
++          _resources = CodexLauncher.EnsureLibraryAsync(_runtime);
++        var snapshot = await ReadSnapshotAsync();
++        foreach (var reason in _controller.Observe(snapshot, DateTimeOffset.UtcNow)) Journal(reason);
++        if (settings.Paused || _suppressed)
++        {
++          // A resume affects later launches, not windows opened while paused.
++          _controller.Ignore(snapshot);
++          WriteStatus("paused");
++          return;
++        }
++        WriteStatus("watching");
++        if (_resources is null || !_resources.IsCompleted) return;
++        await _resources;
++        _lifetime.Token.ThrowIfCancellationRequested();
++        var candidate = _controller.Select(snapshot, DateTimeOffset.UtcNow);
++        if (candidate is null) return;
++        var current = CurrentSettings();
++        if (!current.Enabled || current.Paused || _exitRequested) return;
++        _controller.Attempt(candidate);
++        _candidate = candidate; _lastLauncherExitCode = null; _lastErrorCode = null;
++        _takeoverInFlight = true;
++        Journal("takeover_requested");
++        WriteStatus("takeover");
++        // This bridge only acts on the captured root/descendant identities. It
++        // never spawns Codex; cancellation cannot kill an application child tree.
++        var response = await InvokeBridgeAsync(new[] { "-Action", "Takeover",
++          "-ExpectedProcessId", candidate.ProcessId.ToString(CultureInfo.InvariantCulture),
++          "-ExpectedStartedAt", candidate.StartedAt.UtcDateTime.ToString("O") },
++          TimeSpan.FromSeconds(20), includeLifetime: false);
++        if (!ReadTakeover(response, candidate, out var reasonCode))
++        {
++          Report("takeover_" + reasonCode, "本次自动接入未完成，请重新打开 Codex 或查看助手状态。");
++          return;
++        }
++        Journal("takeover_closed_exact_root");
++        // Pause/uninstall revokes consent immediately, even if the narrowly
++        // scoped close already completed. Do not start another application
++        // after revocation; the user can reopen Codex normally in that race.
++        var afterClose = CurrentSettings();
++        if (!afterClose.Enabled || afterClose.Paused || _exitRequested || _suppressed)
++        {
++          Journal("launch_skipped_after_consent_revoked");
++          WriteStatus("paused");
++          return;
++        }
++        var child = StartLauncher();
++        WriteStatus("launching");
++        _takeoverInFlight = false;
++        if (_exitRequested) { child.Dispose(); ExitThread(); return; }
++        using (child)
++        using (var wait = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token))
++        {
++          wait.CancelAfter(TimeSpan.FromSeconds(330));
++          try { await child.WaitForExitAsync(wait.Token); }
++          catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
++          {
++            Suppress("launch_wait_timeout", "装扮启动仍在进行，已暂停后续自动接管。当前启动进程会继续运行。");
++            return;
++          }
++          if (child.ExitCode != 0)
++          {
++            _lastLauncherExitCode = child.ExitCode;
++            Suppress("launch_failed", "自动装扮启动未完成，已暂停后续接管，请打开壁纸设置查看。");
++            return;
++          }
++          _lastLauncherExitCode = 0;
++        }
++        // Do not infer video/FPS success from this status. --launch owns its
++        // native verification and the helper only reports that command result.
++        Journal("launch_command_completed");
++        WriteStatus("ready");
++        _tray.Text = Caption + "：等待下次启动";
++        _failures = 0;
++      }
++      catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
++      catch
++      {
++        _failures++;
++        _nextProbe = DateTimeOffset.UtcNow.AddSeconds(15);
++        Report("assistant_operation_failed", "自动装扮暂时无法完成，请打开壁纸设置查看。");
++        if (_failures >= 3) Suppress("assistant_paused_after_errors", "自动装扮已因连续错误暂停，请从托盘恢复。");
++      }
++      finally
++      {
++        _takeoverInFlight = false;
++        _busy = false;
++        if (_exitRequested && !_disposed) ExitThread();
++      }
++    }
++
++    private async Task<Snapshot> ReadSnapshotAsync() => ParseSnapshot(await InvokeBridgeAsync(
++      new[] { "-Action", "Snapshot" }, TimeSpan.FromSeconds(10), includeLifetime: true));
++
++    private async Task<string> InvokeBridgeAsync(string[] arguments, TimeSpan timeout, bool includeLifetime)
++    {
++      RequirePlainPath(_bridge, file: true);
++      using var operation = includeLifetime
++        ? CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token)
++        : new CancellationTokenSource();
++      operation.CancelAfter(timeout);
++      var result = await _runner.RunScriptAsync(_bridge, arguments, operation.Token, captureOutput: true);
++      if (result.ExitCode != 0 || Encoding.UTF8.GetByteCount(result.StandardOutput) > MaximumJsonBytes)
++        throw new InvalidOperationException("Assistant bridge failed.");
++      return result.StandardOutput;
++    }
++
++    private Process StartLauncher()
++    {
++      RequirePlainPath(_launcher, file: true);
++      var info = new ProcessStartInfo { FileName = _launcher, UseShellExecute = false,
++        CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(_launcher)! };
++      info.ArgumentList.Add("--launch");
++      info.Environment["LOCALAPPDATA"] = ManagerLocalData.Root;
++      info.Environment["CODEX_DREAM_SKIN_LOCAL_APPDATA"] = ManagerLocalData.Root;
++      return Process.Start(info) ?? throw new InvalidOperationException("Launcher did not start.");
++    }
++
++    private void OpenSettings()
++    {
++      try
++      {
++        RequirePlainPath(_launcher, file: true);
++        Process.Start(new ProcessStartInfo { FileName = _launcher, UseShellExecute = false,
++          WorkingDirectory = Path.GetDirectoryName(_launcher)!, CreateNoWindow = true })?.Dispose();
++      }
++      catch { Report("settings_open_failed", "壁纸设置无法打开，请检查助手安装。"); }
++    }
++
++    private void TogglePause()
++    {
++      try
++      {
++        var current = CurrentSettings();
++        var paused = !(current.Paused || _suppressed);
++        WriteSettings(_settingsPath, current with { Paused = paused });
++        _suppressed = false; _failures = 0; _nextProbe = default;
++        if (!paused) _reported.Clear();
++        if (!paused && _resources?.IsFaulted == true) { _ = _resources.Exception; _resources = null; }
++        if (!paused) _controller.OnlyFutureLaunches(DateTimeOffset.UtcNow);
++        _pause.Checked = paused;
++        _pause.Text = paused ? "恢复自动装扮" : "暂停自动装扮";
++        Journal(paused ? "assistant_paused_by_user" : "assistant_resumed_by_user");
++        WriteStatus(paused ? "paused" : "watching");
++      }
++      catch (OperationCanceledException) when (_exitRequested) { }
++      catch { Report("settings_save_failed", "未能保存助手设置，本次状态未改变。"); }
++    }
++
++    private void RequestExit()
++    {
++      try
++      {
++        var settings = CurrentSettings();
++        WriteSettings(_settingsPath, settings with { Enabled = false });
++        Journal("assistant_disabled_by_user");
++        WriteStatus("paused");
++        _exitRequested = true;
++        _timer.Stop();
++        if (_takeoverInFlight)
++          Report("assistant_exit_deferred", "已撤销自动接管，等待当前检查结束后退出。");
++        else ExitThread();
++      }
++      catch (OperationCanceledException) when (_exitRequested) { }
++      catch
++      {
++        _suppressed = true;
++        Report("disable_save_failed", "停止状态未能保存，助手已暂停，请从壁纸设置关闭。");
++      }
++    }
++
++    private void Suppress(string code, string message)
++    {
++      _suppressed = true;
++      try
++      {
++        var settings = CurrentSettings();
++        WriteSettings(_settingsPath, settings with { Paused = true });
++      }
++      catch (OperationCanceledException) when (_exitRequested) { return; }
++      catch { Journal("pause_save_failed"); }
++      _pause.Checked = true; _pause.Text = "恢复自动装扮";
++      Report(code, message);
++    }
++
++    private Settings CurrentSettings()
++    {
++      try
++      {
++        RequireActiveInstallation(Path.Combine(Path.GetDirectoryName(_settingsPath)!, "startup-assistant-install.json"), _launcher);
++        return ReadSettings(_settingsPath, _launcher);
++      }
++      catch
++      {
++        // An uninstall or a content-version upgrade revokes this executable's
++        // authority. Release the singleton so the new helper can take over;
++        // malformed settings must never leave an old monitor holding it.
++        Journal("assistant_configuration_revoked");
++        WriteStatus("paused");
++        _exitRequested = true;
++        ExitThread();
++        throw new OperationCanceledException();
++      }
++    }
++
++    private void Report(string code, string message)
++    {
++      _lastErrorCode = Regex.IsMatch(code, @"\A[a-z0-9_]{1,96}\z") ? code : "unknown_error";
++      Journal(code);
++      WriteStatus("failed");
++      if (_disposed || !_reported.Add(code)) return;
++      _tray.Text = Caption + "：需要查看";
++      _tray.ShowBalloonTip(5000, Caption, message, ToolTipIcon.Warning);
++    }
++
++    private void WriteStatus(string phase)
++    {
++      try
++      {
++        RequirePlainPath(Path.GetDirectoryName(_statusPath)!, file: false);
++        if (File.Exists(_statusPath)) RequirePlainPath(_statusPath, file: true);
++        var json = JsonSerializer.Serialize(new { schema = 1, pid = Environment.ProcessId,
++          startedAt = _startedAt.UtcDateTime.ToString("O"), phase, candidatePid = _candidate?.ProcessId,
++          candidateStartedAt = _candidate?.StartedAt.UtcDateTime.ToString("O"), lastLauncherExitCode = _lastLauncherExitCode,
++          lastErrorCode = _lastErrorCode });
++        if (json == _lastStatus) return;
++        var temporary = _statusPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
++        try { File.WriteAllText(temporary, json, new UTF8Encoding(false)); File.Move(temporary, _statusPath, true); }
++        finally { if (File.Exists(temporary)) File.Delete(temporary); }
++        _lastStatus = json;
++      }
++      catch { Journal("status_write_failed"); }
++    }
++
++    private void Journal(string code)
++    {
++      // Never journal argv, paths, service URLs, bridge output or exceptions.
++      if (!Regex.IsMatch(code, @"\A[a-z0-9_]{1,96}\z")) code = "unknown_error";
++      try
++      {
++        RequirePlainPath(Path.GetDirectoryName(_journal)!, file: false);
++        var lines = new List<string>();
++        if (File.Exists(_journal))
++        {
++          RequirePlainPath(_journal, file: true);
++          if (new FileInfo(_journal).Length <= 32768)
++            lines.AddRange(File.ReadAllLines(_journal).TakeLast(49));
++        }
++        lines.Add(DateTimeOffset.UtcNow.ToString("O") + " " + code);
++        File.WriteAllLines(_journal, lines, new UTF8Encoding(false));
++      }
++      catch { }
++    }
++
++    protected override void ExitThreadCore()
++    {
++      _timer.Stop();
++      _lifetime.Cancel();
++      base.ExitThreadCore();
++    }
++
++    protected override void Dispose(bool disposing)
++    {
++      if (disposing && !_disposed)
++      {
++        _disposed = true; _timer.Stop(); _lifetime.Cancel();
++        _tray.Visible = false; _tray.Dispose(); _menu.Dispose(); _timer.Dispose();
++        _lifetime.Dispose();
++      }
++      base.Dispose(disposing);
++    }
++  }
++
++  private sealed class Controller
++  {
++    private readonly HashSet<string> _attempted = new(StringComparer.Ordinal);
++    private readonly HashSet<string> _observedExclusions = new(StringComparer.Ordinal);
++    private DateTimeOffset? _notBefore;
++
++    public IEnumerable<string> Observe(Snapshot snapshot, DateTimeOffset now)
++    {
++      foreach (var root in snapshot.Roots)
++      {
++        string? reason = root.Kind == "unknown" ? "unknown_root_preserved"
++          : root.Kind == "normal" && !root.PlainLaunch ? "argument_launch_preserved"
++          : root.Kind == "normal" && !Fresh(root, now) ? "older_root_preserved" : null;
++        if (reason is not null)
++        {
++          _attempted.Add(root.Key);
++          if (_observedExclusions.Add(root.Key)) yield return reason;
++        }
++      }
++    }
++
++    public Root? Select(Snapshot snapshot, DateTimeOffset now)
++    {
++      if (snapshot.OperationBusy) return null;
++      foreach (var root in snapshot.Roots)
++      {
++        if (root.Kind != "normal" || !root.PlainLaunch || !root.VisibleWindow ||
++            !Fresh(root, now) || (_notBefore.HasValue && root.StartedAt <= _notBefore.Value) ||
++            _attempted.Contains(root.Key)) continue;
++        if (snapshot.Roots.Any(other => other.Key != root.Key && other.Kind is "normal" or "unknown"))
++          continue;
++        return root;
++      }
++      return null;
++    }
++    public void Attempt(Root root) => _attempted.Add(root.Key);
++    public void OnlyFutureLaunches(DateTimeOffset after) => _notBefore = after;
++    public void Ignore(Snapshot snapshot) { foreach (var root in snapshot.Roots) _attempted.Add(root.Key); }
++    private static bool Fresh(Root root, DateTimeOffset now) => root.AgeSeconds <= 15 &&
++      root.StartedAt <= now && now - root.StartedAt <= TimeSpan.FromSeconds(15);
++  }
++
++  private static void Fields(JsonElement element, params string[] expected)
++  {
++    if (element.ValueKind != JsonValueKind.Object) throw new JsonException();
++    var fields = element.EnumerateObject().Select(property => property.Name).ToArray();
++    if (fields.Length != expected.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length ||
++        fields.Any(name => !expected.Contains(name, StringComparer.Ordinal))) throw new JsonException();
++  }
++  private static bool Boolean(JsonElement root, string name) => root.GetProperty(name).ValueKind switch
++  { JsonValueKind.True => true, JsonValueKind.False => false, _ => throw new JsonException() };
++  private static DateTimeOffset StartTime(JsonElement root)
++  {
++    var text = root.GetProperty("startedAt").GetString();
++    if (text is null || text.Length > 64 || !DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture,
++      DateTimeStyles.None, out var value) || value.Offset != TimeSpan.Zero) throw new JsonException();
++    return value;
++  }
++
++  private static Snapshot ParseSnapshot(string json)
++  {
++    if (Encoding.UTF8.GetByteCount(json) > MaximumJsonBytes) throw new JsonException();
++    using var document = JsonDocument.Parse(json.TrimStart('\uFEFF'), new JsonDocumentOptions { MaxDepth = 5 });
++    var root = document.RootElement;
++    Fields(root, "schema", "operationBusy", "roots");
++    if (root.GetProperty("schema").GetInt32() != 1) throw new JsonException();
++    var busy = Boolean(root, "operationBusy");
++    var array = root.GetProperty("roots");
++    if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() > 64) throw new JsonException();
++    var processes = new List<Root>();
++    var ids = new HashSet<int>();
++    foreach (var item in array.EnumerateArray())
++    {
++      Fields(item, "processId", "startedAt", "kind", "ageSeconds", "plainLaunch", "visibleWindow");
++      var id = item.GetProperty("processId").GetInt32();
++      var kind = item.GetProperty("kind").GetString();
++      var age = item.GetProperty("ageSeconds").GetDouble();
++      if (id <= 0 || !ids.Add(id) || kind is not ("normal" or "managed" or "unknown") ||
++          !double.IsFinite(age) || age < 0) throw new JsonException();
++      processes.Add(new Root(id, StartTime(item), kind, age, Boolean(item, "plainLaunch"), Boolean(item, "visibleWindow")));
++    }
++    return new Snapshot(busy, processes);
++  }
++
++  private static bool ReadTakeover(string json, Root expected, out string reason)
++  {
++    reason = "rejected";
++    if (Encoding.UTF8.GetByteCount(json) > 8192) throw new JsonException();
++    using var document = JsonDocument.Parse(json.TrimStart('\uFEFF'), new JsonDocumentOptions { MaxDepth = 3 });
++    var root = document.RootElement;
++    if (root.TryGetProperty("reason", out var code))
++    {
++      Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "reason");
++      if (root.GetProperty("schema").GetInt32() != 1 || Boolean(root, "closed") || Boolean(root, "takenOver"))
++        throw new JsonException();
++      if (root.GetProperty("processId").GetInt32() != expected.ProcessId || StartTime(root) != expected.StartedAt)
++        throw new JsonException();
++      reason = code.GetString() ?? "rejected";
++      if (!Regex.IsMatch(reason, @"\A[a-z0-9_]{1,64}\z")) throw new JsonException();
++      return false;
++    }
++    Fields(root, "schema", "closed", "takenOver", "processId", "startedAt");
++    return root.GetProperty("schema").GetInt32() == 1 && Boolean(root, "closed") && Boolean(root, "takenOver") &&
++      root.GetProperty("processId").GetInt32() == expected.ProcessId && StartTime(root) == expected.StartedAt;
++  }
++
++  private static Settings ReadSettings(string file, string expectedLauncher)
++  {
++    RequirePlainPath(file, file: true);
++    if (new FileInfo(file).Length > 8192) throw new JsonException();
++    var bytes = File.ReadAllBytes(file);
++    using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 2 });
++    var root = document.RootElement;
++    Fields(root, "schema", "enabled", "paused", "launcherPath");
++    var launcher = root.GetProperty("launcherPath").GetString();
++    if (root.GetProperty("schema").GetInt32() != 1 || launcher is null ||
++        !string.Equals(Path.GetFullPath(launcher), Path.GetFullPath(expectedLauncher), StringComparison.OrdinalIgnoreCase))
++      throw new JsonException();
++    RequirePlainPath(launcher, file: true);
++    return new Settings(Boolean(root, "enabled"), Boolean(root, "paused"), launcher, bytes);
++  }
++
++  private static void RequireActiveInstallation(string file, string launcher)
++  {
++    RequirePlainPath(file, file: true);
++    if (new FileInfo(file).Length > MaximumJsonBytes) throw new JsonException();
++    using var document = JsonDocument.Parse(File.ReadAllBytes(file), new JsonDocumentOptions { MaxDepth = 6 });
++    var root = document.RootElement;
++    if (root.ValueKind != JsonValueKind.Object ||
++        root.EnumerateObject().Select(item => item.Name).Distinct(StringComparer.Ordinal).Count() != root.EnumerateObject().Count() ||
++        root.GetProperty("schema").GetInt32() != 1 ||
++        root.GetProperty("product").GetString() != "codex-wallpaper-startup-assistant" ||
++        !Boolean(root, "active")) throw new JsonException();
++    var run = root.GetProperty("ownedRun");
++    if (run.ValueKind != JsonValueKind.Object ||
++        run.EnumerateObject().Select(item => item.Name).Distinct(StringComparer.Ordinal).Count() != run.EnumerateObject().Count() ||
++        !Boolean(run, "exists") || run.GetProperty("kind").GetString() != "String" ||
++        run.GetProperty("value").GetString() != '"' + launcher + "\" --assistant") throw new JsonException();
++  }
++
++  private static void WriteSettings(string file, Settings settings)
++  {
++    RequirePlainPath(file, file: true);
++    var directory = Path.GetDirectoryName(file)!;
++    var temporary = Path.Combine(directory, ".assistant-" + Guid.NewGuid().ToString("N") + ".tmp");
++    try
++    {
++      var json = JsonSerializer.Serialize(new { schema = 1, enabled = settings.Enabled,
++        paused = settings.Paused, launcherPath = settings.Launcher });
++      File.WriteAllText(temporary, json, new UTF8Encoding(false));
++      if (!File.ReadAllBytes(file).SequenceEqual(settings.Bytes)) throw new IOException("Settings changed.");
++      File.Replace(temporary, file, null);
++    }
++    finally { if (File.Exists(temporary)) File.Delete(temporary); }
++  }
++
++  private static void RequirePlainPath(string path, bool file)
++  {
++    if (string.IsNullOrWhiteSpace(path) || path.Length > 32700 || !Path.IsPathFullyQualified(path) ||
++        path.StartsWith(@"\\", StringComparison.Ordinal) || path.IndexOfAny(new[] { '\0', '\r', '\n', '"' }) >= 0 ||
++        (file ? !File.Exists(path) : !Directory.Exists(path))) throw new IOException("Invalid helper path.");
++    for (var current = Path.GetFullPath(path); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
++      if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new IOException("Linked helper path.");
++  }
++
++  internal static bool HelperRuntimeSelfTest()
++  {
++    var fixture = Path.Combine(Path.GetTempPath(), "codex-helper-runtime-test-" + Guid.NewGuid().ToString("N"));
++    var previous = Environment.GetEnvironmentVariable("CODEX_DREAM_SKIN_LOCAL_APPDATA");
++    RuntimeProvisioner? runtime = null;
++    try
++    {
++      Directory.CreateDirectory(fixture);
++      Environment.SetEnvironmentVariable("CODEX_DREAM_SKIN_LOCAL_APPDATA", fixture);
++      runtime = new RuntimeProvisioner();
++      runtime.EnsureHelperRuntime();
++      if (!File.Exists(runtime.NodePath) || Directory.EnumerateFiles(runtime.PayloadRoot, "*", SearchOption.AllDirectories).Any())
++        return false;
++      Directory.CreateDirectory(runtime.ScriptsRoot);
++      var marker = Path.Combine(runtime.ScriptsRoot, "start-dream-skin.ps1");
++      File.WriteAllText(marker, "active engine marker must remain unchanged");
++      var stamp = File.GetLastWriteTimeUtc(runtime.NodePath);
++      runtime.EnsureHelperRuntime();
++      return File.ReadAllText(marker) == "active engine marker must remain unchanged" &&
++        File.GetLastWriteTimeUtc(runtime.NodePath) == stamp &&
++        Directory.EnumerateFiles(runtime.PayloadRoot, "*", SearchOption.AllDirectories).Count() == 1;
++    }
++    catch { return false; }
++    finally
++    {
++      Environment.SetEnvironmentVariable("CODEX_DREAM_SKIN_LOCAL_APPDATA", previous);
++      if (runtime is not null)
++      {
++        // Fixed files/directories inside the unique temporary fixture only;
++        // no recursive deletion and no production runtime paths are used.
++        try
++        {
++          File.Delete(runtime.NodePath);
++          var node = Path.GetDirectoryName(runtime.NodePath)!;
++          File.Delete(Path.Combine(node, "NODE-LICENSE.txt"));
++          File.Delete(Path.Combine(runtime.ScriptsRoot, "start-dream-skin.ps1"));
++          if (Directory.Exists(runtime.ScriptsRoot)) Directory.Delete(runtime.ScriptsRoot, false);
++          Directory.Delete(runtime.PayloadRoot, false);
++          Directory.Delete(node, false);
++          Directory.Delete(runtime.RuntimeRoot, false);
++          Directory.Delete(Path.GetDirectoryName(runtime.RuntimeRoot)!, false);
++          Directory.Delete(runtime.StateRoot, false);
++          Directory.Delete(fixture, false);
++        }
++        catch { }
++      }
++    }
++  }
++
++  public static bool SelfTest()
++  {
++    string? fixture = null;
++    try
++    {
++      var now = DateTimeOffset.UtcNow;
++      var fresh = new Root(1001, now.AddSeconds(-1), "normal", 1, true, true);
++      var controller = new Controller();
++      if (controller.Select(new(false, new[] { fresh }), now) != fresh) return false;
++      if (controller.Select(new(false, new[] { fresh with { VisibleWindow = false } }), now) is not null) return false;
++      if (controller.Select(new(false, new[] { fresh }), now) != fresh) return false;
++      if (controller.Select(new(true, new[] { fresh }), now) is not null) return false;
++      foreach (var invalid in new[] { fresh with { PlainLaunch = false }, fresh with { Kind = "unknown" },
++        fresh with { Kind = "managed" }, fresh with { AgeSeconds = 16 }, fresh with { StartedAt = now.AddSeconds(-16) } })
++        if (controller.Select(new(false, new[] { invalid }), now) is not null) return false;
++      var other = fresh with { ProcessId = 1002, StartedAt = now.AddMinutes(-1), AgeSeconds = 60 };
++      if (controller.Select(new(false, new[] { fresh, other }), now) is not null ||
++          controller.Select(new(false, new[] { fresh, other with { Kind = "unknown" } }), now) is not null ||
++          controller.Select(new(false, new[] { fresh, other with { Kind = "managed" } }), now) != fresh) return false;
++      controller.Attempt(fresh);
++      if (controller.Select(new(false, new[] { fresh }), now) is not null ||
++          controller.Select(new(false, new[] { fresh with { StartedAt = now.AddMilliseconds(-100) } }), now) is null) return false;
++      var resumed = new Controller();
++      resumed.OnlyFutureLaunches(now);
++      if (resumed.Select(new(false, new[] { fresh }), now) is not null ||
++          resumed.Select(new(false, new[] { fresh with { StartedAt = now.AddSeconds(1) } }), now.AddSeconds(2)) is null) return false;
++
++      var snapshotJson = JsonSerializer.Serialize(new { schema = 1, operationBusy = false,
++        roots = new[] { new { processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"),
++          kind = "normal", ageSeconds = 1, plainLaunch = true, visibleWindow = true } } });
++      if (ParseSnapshot(snapshotJson).Roots.Count != 1) return false;
++      foreach (var invalid in new[] { "{}", snapshotJson.Replace("\"schema\":1", "\"schema\":1,\"schema\":1"),
++        snapshotJson.Replace("\"visibleWindow\":true", "\"visibleWindow\":\"yes\""),
++        snapshotJson.Replace("\"normal\"", "\"untrusted\""), new string('x', MaximumJsonBytes + 1) })
++      { try { ParseSnapshot(invalid); return false; } catch { } }
++      var success = JsonSerializer.Serialize(new { schema = 1, closed = true, takenOver = true,
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O") });
++      if (!Regex.IsMatch(fresh.StartedAt.UtcDateTime.ToString("O"), @"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z\z")) return false;
++      var refused = JsonSerializer.Serialize(new { schema = 1, closed = false, takenOver = false,
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), reason = "identity_changed" });
++      if (!ReadTakeover(success, fresh, out _) || ReadTakeover(success, other, out _) ||
++          ReadTakeover(refused, fresh, out _)) return false;
++
++      fixture = Path.Combine(Path.GetTempPath(), "codex-assistant-test-" + Guid.NewGuid().ToString("N"));
++      Directory.CreateDirectory(fixture);
++      var executable = Path.Combine(fixture, "CodexDreamSkinManager.exe");
++      File.WriteAllText(executable, "self-test fixture, never executed");
++      var file = Path.Combine(fixture, "startup-assistant.json");
++      File.WriteAllText(file, JsonSerializer.Serialize(new { schema = 1, enabled = true, paused = false, launcherPath = executable }));
++      var settings = ReadSettings(file, executable);
++      WriteSettings(file, settings with { Paused = true });
++      if (!ReadSettings(file, executable).Paused) return false;
++      try { WriteSettings(file, settings with { Enabled = false }); return false; } catch (IOException) { }
++      try { ReadSettings(file, executable + ".other"); return false; } catch { }
++      var journal = Path.Combine(fixture, "startup-assistant-install.json");
++      var goodJournal = JsonSerializer.Serialize(new { schema = 1, product = "codex-wallpaper-startup-assistant",
++        active = true, ownedRun = new { exists = true, kind = "String", value = '"' + executable + "\" --assistant" } });
++      File.WriteAllText(journal, goodJournal);
++      RequireActiveInstallation(journal, executable);
++      foreach (var invalid in new[] { goodJournal.Replace("\"active\":true", "\"active\":false"),
++        goodJournal.Replace("\"active\":true,", ""), goodJournal.Replace("\"exists\":true", "\"exists\":false"),
++        goodJournal.Replace("codex-wallpaper-startup-assistant", "other-product"),
++        goodJournal.Replace(" --assistant", " --launch") })
++      { File.WriteAllText(journal, invalid); try { RequireActiveInstallation(journal, executable); return false; } catch { } }
++      File.Delete(journal);
++      try { RequireActiveInstallation(journal, executable); return false; } catch { }
++      var goodConfig = File.ReadAllText(file);
++      foreach (var invalid in new[] { goodConfig.Replace("\"schema\":1", "\"schema\":2"),
++        goodConfig.Replace("\"enabled\":true", "\"enabled\":\"true\""),
++        goodConfig.Replace("\"schema\":1", "\"schema\":1,\"schema\":1"),
++        goodConfig.Replace("\"paused\":true", "\"paused\":true,\"extra\":false"), new string('x', 8193) })
++      {
++        File.WriteAllText(file, invalid);
++        try { ReadSettings(file, executable); return false; } catch { }
++      }
++      return true;
++    }
++    catch { return false; }
++    finally
++    {
++      // Delete only the fixed fixture files created by this self-test.
++      if (fixture is not null)
++      {
++        try { File.Delete(Path.Combine(fixture, "startup-assistant.json")); File.Delete(Path.Combine(fixture, "startup-assistant-install.json")); File.Delete(Path.Combine(fixture, "CodexDreamSkinManager.exe")); Directory.Delete(fixture, false); }
++        catch { }
++      }
++    }
++  }
++}
 diff --git a/windows/app/CodexDreamSkin.Manager/TaskbarRelaunch.cs b/windows/app/CodexDreamSkin.Manager/TaskbarRelaunch.cs
 new file mode 100644
 index 0000000..c426b3e

@@ -4,9 +4,9 @@
 
 Local Wallpaper Engine backgrounds and configurable glass UI for managed Windows Codex sessions through an external native adapter.
 
-**The current implementation combines an MCP control plugin, an external native adapter and a separate managed launcher. Importing the plugin does not automatically apply decoration when Codex opens through its original official entry. That launch integration remains unimplemented; an alternate shortcut does not fulfill it.**
+**The project combines a control plugin and an external window adapter. An optional resident assistant keeps the original Codex entry: it detects a newly opened ordinary visible window, reopens the application and loads the saved appearance. A brief window restart may be visible. This is not a host-native theme extension; the assistant requires separate opt-in.**
 
-As of 2026-10-29, reopening after closing the last window was verified while the managed browser process remained alive. Automatic restoration after all background processes exit has not completed validation. The latest direct official application launch opened an undecorated normal instance.
+As of 2026-10-29, Codex 26.1021.3705.0 was verified after all application background processes exited: launching the original official application entry let the assistant restore a playing 4K video, mascot and glass effects, with wallpaper settings unchanged. See [Compatibility](docs/COMPATIBILITY.md) for the validation scope and limitations.
 
 This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](https://github.com/elysia395/dsh-wallpaper-engine), using a local service and a scoped native-window bridge. Its Windows launcher is based on [Codex Dynamic Skin](https://github.com/CCDawn/Codex-Dynamic-Skin). It is independent of OpenAI, Valve and the upstream projects.
 
@@ -23,6 +23,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - Explicit first-run restart confirmation, pause and appearance restoration.
 - Restores the verified managed wallpaper window when multiple Codex instances exist; background output does not block the manager's startup result.
 - An optional separate launcher restores the local resource service and attempts to load the saved appearance; its entries coexist with the official application entry.
+- An optional resident assistant reattaches decoration after an ordinary launch, with tray pause/resume/disable controls and restoration of its login startup entry on uninstall.
 
 ## Supported scope
 
@@ -48,7 +49,18 @@ The output `dist/build-<timestamp>-<id>/` contains a complete `gpt-wallpaper` pl
 
 Open the wallpaper skill, select a local wallpaper, and confirm the manager's first-run restart. Click the mascot to open its library panel, then use its settings entry at the bottom. Right-click the mascot to open settings directly; `Ctrl+Alt+W` remains available. This repository provides a source-build process; upstream binaries are not presented as this project's release.
 
-To install the optional managed launch path, run `.\scripts\install-launcher.ps1` from the **built** `gpt-wallpaper` directory. It copies the runtime into the user state directory and creates desktop and Start menu `Codex` shortcuts, which users can pin to the taskbar. This invokes the external adapter; it does not integrate decoration with the original application's launch lifecycle. Restoration after all background processes exit still requires validation. Rerun the installer to update its shortcuts and matching taskbar entries. `-Action Uninstall` restores desktop and Start menu entries while retaining wallpaper settings; unpin the taskbar entry manually in Windows. Official Store application registrations and protocol links are unchanged. Automatic decoration through those entries is not implemented.
+To install the optional managed launch path, run `.\scripts\install-launcher.ps1` from the **built** `gpt-wallpaper` directory. It copies the runtime into the user state directory and creates desktop and Start menu `Codex` shortcuts for manually starting a managed session; these can also be pinned to the taskbar. Rerun the installer to update its shortcuts and matching taskbar entries. `-Action Uninstall` restores desktop and Start menu entries while retaining wallpaper settings; unpin the taskbar entry manually in Windows. Official Store application registrations and protocol links remain unchanged; the assistant below observes ordinary launches to reattach decoration.
+
+To retain the original official icon, opt into the resident assistant after installing the stable payload:
+
+```powershell
+.\scripts\install-startup-assistant.ps1
+node .\scripts\startup-assistant.mjs --restore
+```
+
+The assistant has a dedicated per-user login startup entry; plugin initialization also restores an already enabled assistant. It handles only ordinary, argument-free, visible instances started within 15 seconds, revalidating exact process identities. Existing ordinary sessions, deep links, file-open arguments and hidden background launches are preserved. A failed attempt is recorded rather than repeatedly retried. A session that was already open for a long time during installation must be exited before testing a fresh launch.
+
+The tray offers pause, resume and disable-and-exit. Resume affects later launches. Run `.\scripts\install-startup-assistant.ps1 -Action Uninstall` to revoke the assistant and restore its backed-up startup entry. Wallpaper settings and later private configuration or registry edits are retained.
 
 ## Implementation and development
 
