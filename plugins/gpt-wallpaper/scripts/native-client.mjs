@@ -149,6 +149,17 @@ export function buildCodexGlassCss(selection = {}) {
   return rules.join('\n');
 }
 
+/** Static reflected light on the existing glass, without an overlay element. */
+export function buildCodexGlassReflectionCss(selection = {}) {
+  const scope='body[data-codex-we-native="on"][data-we-glass-page]';
+  const policy=selection.glassSurfacePolicy||{},rules=[];
+  const reflection=(target,top,middle,edge='var(--we-glass-highlight,0.32)')=>`${target}{background-image:linear-gradient(90deg,rgba(255,255,255,${edge}),rgba(255,255,255,calc(${edge} * .38))),linear-gradient(180deg,rgba(255,255,255,${top}) 0px,rgba(255,255,255,${middle}) 28px,rgba(255,255,255,0) 96px),linear-gradient(112deg,rgba(189,218,246,.035),rgba(255,255,255,0) 58%)!important;background-size:100% 1px,100% 100%,100% 100%!important;background-position:left top!important;background-repeat:no-repeat!important}`;
+  if(policy.declared!=='native')rules.push(reflection(`${scope}[data-we-glass-chat] [data-codex-we-surface="composer"]`,'0.16','0.045'));
+  if(policy['settings-window']!=='native')rules.push(reflection(`${scope}[data-we-glass-window] #codex-we-native-settings`,'var(--we-panel-sheen-a,0.10)','var(--we-panel-sheen-b,0.03)'));
+  if(selection.sidebarGlass===true&&selection.sidebarFullClear!==true&&policy['right-sidebar']!=='native')rules.push(reflection(`${scope}[data-we-sidebar-glass] [data-codex-we-surface="right-sidebar"][data-summary-panel-variant="summary"]`,'var(--we-sidebar-sheen-a,calc(var(--we-sidebar-sheen,1) * .14))','var(--we-sidebar-sheen-b,calc(var(--we-sidebar-sheen,1) * .04))','calc(var(--we-sidebar-sheen,1) * var(--we-glass-highlight,0.32))'));
+  return rules.join('\n');
+}
+
 /** KeyboardEvent.code bindings used by the original DSH shortcuts service. */
 export function normalizeShortcutBinding(value) {
   if(value===null||value==='')return null;
@@ -239,6 +250,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     };
     const __compileFonts=${buildCodexTypographyCss.toString()};
     const __compileGlass=${buildCodexGlassCss.toString()};
+    const __compileReflections=${buildCodexGlassReflectionCss.toString()};
     const __compilePages=${buildCodexPageCss.toString()};
     const __pageAdapter=(${createNativePageAdapter.toString()})({document:__doc,native:__native});
     const __parseBinding=${normalizeShortcutBinding.toString()};
@@ -378,7 +390,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     function __syncNativeAdapters(){
       const selection=__mainClient?.selection||{};
       if(!__adapterStyle){__adapterStyle=__createPluginElement('style');__adapterStyle.id='codex-we-native-adapter-style';__doc.head.appendChild(__adapterStyle);}
-      const css=[__compileGlass(selection),__compilePages(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
+      const css=[__compileGlass(selection),__compilePages(selection),__compileReflections(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
     }
     const __localeService = {getSnapshot:()=>({active:'zh'}),register:()=>()=>{},subscribe:()=>()=>{}};
     const __ctx = {
