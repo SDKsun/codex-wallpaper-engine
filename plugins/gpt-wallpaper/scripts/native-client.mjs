@@ -3,6 +3,8 @@
  * This builder never fetches or evaluates script URLs. The caller supplies
  * trusted local UMD/module text and delivers the result through verified CDP.
  */
+import {buildCodexPageCss, createNativePageAdapter} from './native-pages.mjs';
+
 export const NATIVE_DSH_STATE_KEY = '__GPT_DSH_NATIVE_STATE__';
 const MAX_SCRIPT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAIN = 'dsh-plugin-wallpaper-engine';
@@ -232,6 +234,8 @@ function bootstrapSource(options, effectiveBaseExpression) {
     };
     const __compileFonts=${buildCodexTypographyCss.toString()};
     const __compileGlass=${buildCodexGlassCss.toString()};
+    const __compilePages=${buildCodexPageCss.toString()};
+    const __pageAdapter=(${createNativePageAdapter.toString()})({document:__doc,native:__native});
     const __parseBinding=${normalizeShortcutBinding.toString()};
     let __shortcutOverrides=Object.create(null);try{const saved=JSON.parse(__storage.getItem('native-shortcuts')||'{}');if(saved&&typeof saved==='object'&&!Array.isArray(saved))for(const[id,binding]of Object.entries(saved))if(/^[a-z0-9_.-]{1,80}$/i.test(id))try{__shortcutOverrides[id]=__parseBinding(binding);}catch{}}catch{}
     const __isMac=/mac/i.test(String(__native.navigator?.platform||__native.navigator?.userAgentData?.platform||''));
@@ -369,7 +373,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     function __syncNativeAdapters(){
       const selection=__mainClient?.selection||{};
       if(!__adapterStyle){__adapterStyle=__createPluginElement('style');__adapterStyle.id='codex-we-native-adapter-style';__doc.head.appendChild(__adapterStyle);}
-      const css=__compileGlass(selection)+String.fromCharCode(10)+__compileFonts(selection);if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
+      const css=[__compileGlass(selection),__compilePages(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
     }
     const __localeService = {getSnapshot:()=>({active:'zh'}),register:()=>()=>{},subscribe:()=>()=>{}};
     const __ctx = {
@@ -390,6 +394,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
       const cards=[...__doc.querySelectorAll('[class*="_ComposerLayoutRoot_"]')];
       for(const node of __doc.querySelectorAll('.composer-surface-chrome'))if(!cards.some(card=>card===node||card.contains?.(node)||node.contains?.(card)))cards.push(node);
       for(const node of cards)mark(node,'composer');
+      __pageAdapter.scan();
       __state.surfaceCount=[...__surfaceRecords.keys()].filter(node=>node.isConnected!==false).length;
     }
     function __probe(){
@@ -412,6 +417,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
       try{__settingsRoot?.unmount();}catch{}
       try{__surfaceObserver?.disconnect();}catch{}
       try{__styleObserver?.disconnect();}catch{}
+      try{__pageAdapter.dispose();}catch{}
       for(const item of __listeners)try{item.target.removeEventListener(item.type,item.fn,item.opts);}catch{}__listeners.clear();
       for(const id of __timeouts)__native.clearTimeout(id);for(const id of __intervals)__native.clearInterval(id);for(const id of __rafs)__native.cancelAnimationFrame(id);for(const id of __idleHandles)if(typeof __native.cancelIdleCallback==='function')__native.cancelIdleCallback.call(__native,id);__timeouts.clear();__intervals.clear();__rafs.clear();__idleHandles.clear();
       for(const[node,entry]of __surfaceRecords)if(node.getAttribute('data-codex-we-surface')===entry.written){if(entry.before===null)node.removeAttribute('data-codex-we-surface');else node.setAttribute('data-codex-we-surface',entry.before);}__surfaceRecords.clear();

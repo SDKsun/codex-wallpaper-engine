@@ -22,6 +22,17 @@ Registry archive integrity: sha512-If5DUW3hHeWOyyhvswHkycWm0U5mWJUpKb4ws/J+jrwK3
 Bundled browser engine SHA-256: 2f86ab955f3377e2fa2cfd5ffa72f5813fe8f6e4a272295fed36f4c1e626b1e5.
 License: vendor/webwallgl/LICENSE. Retrieved with npm pack --ignore-scripts;
 the self-contained browser bundle is served locally, with no runtime CDN dependency.
+WebWallGL's own code is MIT; its declared media dependency Mediabunny uses
+MPL-2.0: https://github.com/Vanilagy/mediabunny.
+The pinned DSH lockfile resolves Mediabunny 1.61.3, whose corresponding source
+and license are https://github.com/Vanilagy/mediabunny/tree/v1.61.3 and
+https://github.com/Vanilagy/mediabunny/blob/v1.61.3/LICENSE.
+That lockfile does not establish the version embedded in WebWallGL's prebuilt
+global bundle. This source-only repository does not include that bundle or
+Mediabunny code. Before distributing a generated binary package containing
+covered code, verify its embedded version and provide its corresponding
+source, MPL text and notices; WebWallGL's MIT file alone is insufficient.
+
 DSH Wallpaper Engine 1.4.0 source, MIT,
 https://github.com/elysia395/dsh-wallpaper-engine,
 commit 7ba44b2424e55b70fe28fea753a7abf27ae7cdb3.
