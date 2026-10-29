@@ -38,7 +38,7 @@ npm test
 
 The output `dist/build-<timestamp>-<id>/` contains a complete `gpt-wallpaper` plugin and `.agents/plugins/marketplace.json`. Import this output using your client's supported local-plugin or local-marketplace flow. The source catalog alone does not contain the compiled manager.
 
-Open the wallpaper skill, select a local wallpaper, and confirm the manager's first-run restart. Use the wallpaper settings button or `Ctrl+Alt+W` afterward. This repository provides a source-build process; upstream binaries are not presented as this project's release.
+Open the wallpaper skill, select a local wallpaper, and confirm the manager's first-run restart. Click the mascot to open its library panel, then use its settings entry at the bottom. Right-click the mascot to open settings directly; `Ctrl+Alt+W` remains available. This repository provides a source-build process; upstream binaries are not presented as this project's release.
 
 ## Implementation and development
 

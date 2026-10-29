@@ -80,9 +80,10 @@ test('bootstrap preserves native React/loader, renders original registered setti
   state.openSettings();assert.equal(b.document.getElementById('codex-we-native-settings').open,true);
   state.closeSettings();assert.equal(b.document.getElementById('codex-we-native-settings').open,false);
   assert.equal(b.document.documentElement.style.getPropertyValue('--dsw-alias-label-primary'),'#eeeeee');
-  const firstTrigger=b.document.getElementById('codex-we-native-trigger');
+  assert.equal(b.document.getElementById('codex-we-native-trigger'),null);
+  const firstDialog=b.document.getElementById('codex-we-native-settings');
   new vm.Script(expression).runInContext(b.context);
-  assert.equal(state.phase,'disposed');assert.equal(firstTrigger.isConnected,false);
+  assert.equal(state.phase,'disposed');assert.equal(firstDialog.isConnected,false);
   b.root[NATIVE_DSH_STATE_KEY].cleanup();
   assert.equal(b.root[NATIVE_DSH_STATE_KEY],undefined);
   for(const id of ['codex-we-native-trigger','codex-we-native-settings','codex-we-native-style','dsh-wallpaper-engine-layer'])assert.equal(b.document.getElementById(id),null);
@@ -115,14 +116,14 @@ test('tracked refresh polls the real export without overlap or reinjection and s
   b.document.refreshWait=new Promise(resolve=>{release=resolve;});
   const refreshing=client.replace("},selection:{id:'fixture'}};", "},codexRefresh(){const body=document.body;body.setAttribute('data-refresh-count',String(Number(body.getAttribute('data-refresh-count')||0)+1));return document.refreshWait;},selection:{id:'fixture'}};");
   new vm.Script(buildNativeClient({...options,clientBundles:[refreshing]})).runInContext(b.context);
-  const state=b.root[NATIVE_DSH_STATE_KEY];const trigger=b.document.getElementById('codex-we-native-trigger');
+  const state=b.root[NATIVE_DSH_STATE_KEY];const dialog=b.document.getElementById('codex-we-native-settings');
   const poll=[...b.intervals.values()].find(timer=>timer.ms===2000);assert.ok(poll);
   poll.fn();poll.fn();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(b.document.body.getAttribute('data-refresh-count'),'1');
   release();await new Promise(resolve=>setImmediate(resolve));
   poll.fn();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(b.document.body.getAttribute('data-refresh-count'),'2');
-  assert.equal(b.document.getElementById('codex-we-native-trigger'),trigger);
+  assert.equal(b.document.getElementById('codex-we-native-settings'),dialog);
   assert.equal(state.summary().refreshError,null);
   state.cleanup();assert.equal(b.intervals.size,0);poll.fn();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(b.document.body.getAttribute('data-refresh-count'),'2');
@@ -172,7 +173,7 @@ test('stylesheet evidence rejects blocked fallback, foreign sheets, empty rules 
   blocked.root[NATIVE_DSH_STATE_KEY].cleanup();
   const b=browser({inlineStyles:false,constructableStyles:true});
   new vm.Script(buildNativeClient(options)).runInContext(b.context);
-  const state=b.root[NATIVE_DSH_STATE_KEY],owned=b.document.adoptedStyleSheets.find(sheet=>sheet.cssRules[0]?.cssText.includes('#codex-we-native-trigger'));
+  const state=b.root[NATIVE_DSH_STATE_KEY],owned=b.document.adoptedStyleSheets.find(sheet=>sheet.cssRules[0]?.cssText.includes('.codex-we-native-title'));
   assert.equal(state.stylesheetApplied(),true);
   owned.replaceSync('');assert.equal(state.stylesheetApplied(),false);
   owned.replaceSync('.owned{color:red}');assert.equal(state.stylesheetApplied(),true);

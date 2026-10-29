@@ -186,15 +186,13 @@ function optionsOf(options) {
 }
 
 const SHELL_CSS = `
-#codex-we-native-trigger{position:fixed;right:22px;top:54px;z-index:2147480000;border:1px solid #ffffff33;border-radius:999px;padding:8px 14px;color:#f6f8ff;background:#182439d9;backdrop-filter:blur(18px);font:12px/1.4 system-ui,sans-serif;cursor:pointer;-webkit-app-region:no-drag}
 #codex-we-native-settings{width:min(1080px,94vw);max-width:94vw;max-height:90vh;margin:auto;padding:0;border:1px solid #ffffff33;border-radius:20px;color:var(--dsw-alias-label-primary,#f1f4ff);background:var(--we-panel-color,#111923);box-shadow:0 28px 110px #0008;z-index:2147480001;font:14px/1.5 system-ui,sans-serif}
 #codex-we-native-settings::backdrop{background:#0006;backdrop-filter:blur(3px)}
 .codex-we-native-title{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:14px 20px;border-bottom:1px solid #ffffff20}
 .codex-we-native-title strong{font-size:15px;font-weight:600}.codex-we-native-title button{border:1px solid #ffffff30;background:#ffffff0d;color:inherit;border-radius:9px;padding:5px 11px;cursor:pointer}
 #codex-we-native-panel{padding:18px;max-height:calc(90vh - 65px);overflow:auto;overscroll-behavior:contain}
 body[data-codex-we-native="on"][data-we-wallpaper]{isolation:isolate;background:transparent!important}
-#codex-we-native-capabilities{margin:8px 20px;color:var(--dsw-alias-label-secondary,#aab2c3);font:12px/1.5 system-ui,sans-serif}
-@media(prefers-reduced-motion:reduce){#codex-we-native-trigger{transition:none}}`;
+#codex-we-native-capabilities{margin:8px 20px;color:var(--dsw-alias-label-secondary,#aab2c3);font:12px/1.5 system-ui,sans-serif}`;
 
 function bootstrapSource(options, effectiveBaseExpression) {
   const {base,reactSource,reactDOMSource,clientBundles,sceneRuntimeSource,title} = options;
@@ -394,6 +392,12 @@ function bootstrapSource(options, effectiveBaseExpression) {
       const cards=[...__doc.querySelectorAll('[class*="_ComposerLayoutRoot_"]')];
       for(const node of __doc.querySelectorAll('.composer-surface-chrome'))if(!cards.some(card=>card===node||card.contains?.(node)||node.contains?.(card)))cards.push(node);
       for(const node of cards)mark(node,'composer');
+      for(const rope of __doc.querySelectorAll('#dsh-wallpaper-engine-rope-dock .we-rope')){
+        const record=__themeAttrs.find(item=>item.node===rope&&item.name==='title');
+        const title=(record?record.before:rope.getAttribute('title'))||'壁纸库';
+        const hint=title+' · 右键打开壁纸设置';
+        if(rope.getAttribute('title')!==hint)__setAttributeOwned(rope,'title',hint);
+      }
       __pageAdapter.scan();
       __state.surfaceCount=[...__surfaceRecords.keys()].filter(node=>node.isConnected!==false).length;
     }
@@ -447,15 +451,27 @@ function bootstrapSource(options, effectiveBaseExpression) {
       })(__windowProxy,__windowProxy,__windowProxy,__documentProxy,__setTimeout,__clearTimeout,__setInterval,__clearInterval,__raf,__caf,__storage,__privateFetch,__PrivateImage);
       if(!__settingsRender)throw new Error('Original DSH settings section was not registered');
       const style=__createPluginElement('style');style.id='codex-we-native-style';style.textContent=${JSON.stringify(SHELL_CSS)};__doc.head.appendChild(style);
-      const trigger=__doc.createElement('button');trigger.id='codex-we-native-trigger';trigger.type='button';trigger.textContent='壁纸设置';trigger.setAttribute('aria-label','打开 Wallpaper Engine 壁纸设置');
       const dialog=__doc.createElement('dialog');dialog.id='codex-we-native-settings';dialog.setAttribute('aria-label',${JSON.stringify(title)});
       const heading=__doc.createElement('div');heading.className='codex-we-native-title';const label=__doc.createElement('strong');label.textContent=${JSON.stringify(title)};const shortcut=__doc.createElement('input');shortcut.id='codex-we-native-shortcut';shortcut.setAttribute('aria-label','壁纸快捷键，留空禁用');shortcut.placeholder='Ctrl+Alt+W';shortcut.value='Ctrl+Alt+W';const saveShortcut=__doc.createElement('button');saveShortcut.type='button';saveShortcut.textContent='保存快捷键';const close=__doc.createElement('button');close.type='button';close.textContent='关闭';heading.append(label,shortcut,saveShortcut,close);
-      const panel=__doc.createElement('div');panel.id='codex-we-native-panel';dialog.append(heading,panel);__doc.body.append(trigger,dialog);
+      const panel=__doc.createElement('div');panel.id='codex-we-native-panel';dialog.append(heading,panel);__doc.body.append(dialog);
       __settingsRoot=__ReactDOM.createRoot(panel);__settingsRoot.render(__settingsRender());
-      const open=()=>{if(typeof dialog.showModal==='function'){if(!dialog.open)dialog.showModal();}else{dialog.hidden=false;dialog.setAttribute('open','');}};
+      const open=(tab)=>{if(['appearance','playback'].includes(tab)&&__mainClient?.selection){__mainClient.selection.settingsTabRequest=tab;__settingsRoot.render(__settingsRender());}if(typeof dialog.showModal==='function'){if(!dialog.open)dialog.showModal();}else{dialog.hidden=false;dialog.setAttribute('open','');}};
       const hide=()=>{if(typeof dialog.close==='function')dialog.close();else{dialog.hidden=true;dialog.removeAttribute('open');}};
       if(typeof dialog.showModal!=='function')dialog.hidden=true;
-      __listen(trigger,'click',open);__listen(close,'click',hide);__state.openSettings=open;__state.closeSettings=hide;
+      __listen(close,'click',hide);__state.openSettings=open;__state.closeSettings=hide;
+      // These targets belong to the wallpaper widget, not to the app menus.
+      // Capture stops the original DSH settings route before it looks for its
+      // host's account menu. The mascot's left-click and drag stay original.
+      __listen(__doc,'click',event=>{
+        const entry=event.target?.closest?.('#dsh-wallpaper-engine-rope-dock .we-qp__settings[data-we-qp-entry="1"]');if(!entry)return;
+        const tabs=entry.closest('.we-qp')?.querySelectorAll('.we-qp__tabs [role="tab"]')||[];
+        const index=[...tabs].findIndex(tab=>tab.getAttribute('aria-selected')==='true');
+        event.preventDefault?.();event.stopImmediatePropagation?.();open(['','appearance','playback'][index]);
+      },true);
+      __listen(__doc,'contextmenu',event=>{
+        if(!event.target?.closest?.('#dsh-wallpaper-engine-rope-dock .we-rope'))return;
+        event.preventDefault?.();event.stopImmediatePropagation?.();open();
+      },true);
       __listen(saveShortcut,'click',()=>{try{__configureShortcut('wallpaper.sidebar.toggle',shortcut.value);saveShortcut.textContent='已保存';}catch(error){saveShortcut.textContent='快捷键无效';saveShortcut.title=String(error?.message||error);}});__listen(__native,'keydown',__onShortcut);
       __effectPhase=false;for(const effect of __effects){const cleanup=effect();if(typeof cleanup==='function')__disposers.push(cleanup);}__effects.length=0;__updateShortcutInput();
       __surfaces();if(typeof __native.MutationObserver==='function'){__surfaceObserver=new __native.MutationObserver(()=>__surfaces());__surfaceObserver.observe(__doc.body,{subtree:true,childList:true});__styleObserver=new __native.MutationObserver(()=>__syncPluginStyles());__styleObserver.observe(__doc.head,{subtree:true,childList:true,characterData:true});}
