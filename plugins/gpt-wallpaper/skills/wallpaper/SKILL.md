@@ -3,6 +3,8 @@ name: wallpaper
 description: 管理当前 Windows ChatGPT/Codex 的图片与视频背景、壁纸透出度、Wallpaper Engine 本地视频、暂停与自动轮播。
 ---
 
+能力边界：本插件提供 MCP 控制工具与独立壁纸库，聊天背景由外部窗口适配器实现。它不是 DSH 那样的宿主原生主题扩展；安装或启用插件不会让官方 Codex/ChatGPT 普通启动入口自动获得装扮。受管启动器是现有兼容方案，不能把它当作“正常启动应用就自动加载”的需求已经完成。会话钩子、资源服务恢复或配置存在也不能证明宿主背景已加载。
+
 使用本插件 wallpaper_control 工具执行用户请求。默认用 open_library 启动可视化壁纸库，再用 open_in_codex 的 browser 目标打开返回的 URL，显示在当前聊天侧栏。完整界面自动发现本机 Steam 工坊，直接选择壁纸；基础模式另支持本地图片/MP4/WebM 目录。管理器 open_manager 用于首次启用引擎、确认重启或恢复官方外观。壁纸库管理页面的玻璃效果不代表聊天界面已经生效。
 
 工具不可用时可在此技能所在插件根目录执行 `node scripts/server.mjs --command '{"action":"status"}'`，传 JSON 的方式须遵守当前 shell 的安全引用规则；更推荐通过 stdin 调用 MCP，避免路径转义问题。
