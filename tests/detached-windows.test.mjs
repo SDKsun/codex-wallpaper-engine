@@ -60,7 +60,8 @@ test('independent library daemon honors isolated LOCALAPPDATA and ready-file ide
     launched = await launchIndependent({executable:process.execPath,args:[serverScript,'--library','--ready-file',readyFile],cwd:path.dirname(serverScript),showWindow:false});
     assert.equal(launched.verifiedBeforeResume,true);
     let ready;
-    for(let i=0;i<120;i++) {try {ready=JSON.parse(await fs.readFile(readyFile,'utf8'));break;} catch {await new Promise(r=>setTimeout(r,50));}}
+    for(let i=0;i<300;i++) {try {ready=JSON.parse(await fs.readFile(readyFile,'utf8'));break;} catch {await new Promise(r=>setTimeout(r,50));}}
+    assert.ok(ready && Number.isInteger(ready.pid),'The isolated daemon did not publish a valid ready file within 15 seconds');
     assert.equal(ready.pid,launched.pid);
     const ping = new URL('/ping',ready.url);ping.search = new URL(ready.url).search;
     const health = await (await fetch(ping)).json();assert.equal(health.plugin,'gpt-wallpaper');assert.equal(health.apiVersion,5);

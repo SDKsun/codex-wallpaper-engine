@@ -8,7 +8,7 @@
   "engines": {"node": ">=24"},
   "scripts": {
     "prepare:vendor": "node scripts/prepare-vendor.mjs",
-    "test": "node --test tests/*.test.mjs plugins/gpt-wallpaper/vendor/dsh-engine/tests/*.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "check:publication": "node scripts/check-publication.mjs",
     "build": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts/build-plugin.ps1"
   }
