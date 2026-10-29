@@ -1,0 +1,20 @@
+[
+  {
+    "name": "webwallgl.mjs",
+    "before": "f838e70347df8205edca5f3fc04dbb7c56b31738b5785b27038d912d5c45a1bc",
+    "after": "b8582c86221aa7698ca97e356a9b17f33aa3d3070a0721462132eba092b93fda",
+    "prepend": "/* Codex adapter: token-scoped local-assets endpoint; original default route preserved. */\n",
+    "start": 924756,
+    "from": "\"/api/local-assets\"",
+    "to": "((typeof location!==\"undefined\"&&/^\\/dsh\\/[a-f0-9]{64}\\/wallpaper-engine\\/scene-live\\//.test(location.pathname))?location.pathname.split(\"/wallpaper-engine/scene-live/\")[0]+\"/api/local-assets\":\"/api/local-assets\")"
+  },
+  {
+    "name": "webwallgl.global.min.js",
+    "before": "2f86ab955f3377e2fa2cfd5ffa72f5813fe8f6e4a272295fed36f4c1e626b1e5",
+    "after": "260729326fb2e2f3c595eef57de9a50cb7f7ac1d335ebd8a3539b46b53f0b05b",
+    "prepend": "/* Codex adapter: token-scoped local-assets endpoint; original default route preserved. */\n",
+    "start": 865972,
+    "from": "\"/api/local-assets\"",
+    "to": "((typeof location!==\"undefined\"&&/^\\/dsh\\/[a-f0-9]{64}\\/wallpaper-engine\\/scene-live\\//.test(location.pathname))?location.pathname.split(\"/wallpaper-engine/scene-live/\")[0]+\"/api/local-assets\":\"/api/local-assets\")"
+  }
+]

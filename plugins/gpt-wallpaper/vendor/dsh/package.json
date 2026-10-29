@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "module",
+  "name": "dsh-wallpaper-schema-vendored",
+  "license": "MIT",
+  "source": "https://github.com/elysia395/dsh-wallpaper-engine",
+  "commit": "7ba44b2424e55b70fe28fea753a7abf27ae7cdb3"
+}

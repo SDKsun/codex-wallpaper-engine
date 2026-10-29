@@ -1,0 +1,10 @@
+{
+  "name": "codex-wallpaper-engine",
+  "interface": {"displayName": "Codex 壁纸引擎"},
+  "plugins": [{
+    "name": "gpt-wallpaper",
+    "source": {"source": "local", "path": "./plugins/gpt-wallpaper"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity"
+  }]
+}

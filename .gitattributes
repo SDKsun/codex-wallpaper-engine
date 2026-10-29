@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.patch text eol=lf
+*.patch -whitespace
+plugins/gpt-wallpaper/NODE-LICENSE.txt -whitespace
+*.ps1 text eol=lf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary

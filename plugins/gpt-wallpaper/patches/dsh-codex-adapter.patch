@@ -1,0 +1,420 @@
+diff --git a/lib/media-origin.js b/lib/media-origin.js
+index cb7dd86..8a82fc3 100644
+--- a/lib/media-origin.js
++++ b/lib/media-origin.js
+@@ -121,60 +121,13 @@ export function createMediaOrigin({ base, log, notice, appendDiagLine, disposers
+     return ensureMediaOrigin().then((m) => (m ? m.base : ''));
+   }
+   function ensureMediaOrigin() {
+-    if (mediaOrigin) return Promise.resolve(mediaOrigin);
+-    if (mediaOriginDead) return Promise.resolve(null);
+-    if (mediaOriginTask) return mediaOriginTask;
+-    mediaOriginTask = new Promise((done) => {
+-      const unavailable = (cause) => {
+-        const msg = cause instanceof Error ? cause.message : String(cause);
+-        // error：这不是优雅降级 —— 网页壁纸在 Desktop 上会直接 403（`ensureMediaOrigin`
+-        // 上方那段注释说明了能力头栅栏），也就是该形态的核心能力不可用。
+-        log.error(`壁纸媒体源不可用（网页壁纸回落应用源；Desktop 上会 403）：${msg}`);
+-        appendDiagLine('media-origin', { base: null, error: msg.slice(0, 160) });
+-        mediaOriginTask = null;
+-        mediaOriginDead = true;
+-        done(null);
+-      };
+-      let server;
+-      try {
+-        server = createServer((req, res) => {
+-          let pathname;
+-          try { pathname = new URL(req.url || '/', 'http://x').pathname; } catch { pathname = ''; }
+-          // 渲染页的诊断信标打的是 `{mediaBase origin}/diag`（**根路径**，见 routes/diag.js 的
+-          // Kg()）。场景壁纸的 mediaBase 指向本媒体源之后，这个根路径必须在这里也有落点 ——
+-          // 否则「大场景 pkg 首帧超时」时渲染页的告警会以 404 **静默丢掉**，而那正是排查现场
+-          // 唯一的内窗（同一条不变量见 routes/diag.js）。
+-          // 纪律与 /scene-files 一致：**同一个 handleDiag**，不另起一份缓冲（`/diag-log` 读的是
+-          // 同一份）；`${base}/diag` 一并接上，与 app 源的两条通道保持对称。
+-          if (pathname === '/diag' || pathname === `${base}/diag`) {
+-            // 未武装只可能发生在启动竞态里；此时**不假装成功** —— 落到下面的 404，
+-            // 让"告警丢了"当场可见，而不是被一个 204 吞掉。
+-            if (mediaDiagHandler) { mediaDiagHandler(req, res); return; }
+-          }
+-          if (!pathname.startsWith(`${base}/scene-files/`)) {
+-            res.statusCode = 404;
+-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+-            res.setHeader('Cache-Control', 'no-store');
+-            res.end('not found');
+-            return;
+-          }
+-          handleSceneFiles(req, res, 'media');
+-        });
+-      } catch (cause) { unavailable(cause); return; }
+-      server.on('clientError', (_err, socket) => { try { socket.destroy(); } catch { /* ignore */ } });
+-      server.on('error', unavailable);
+-      server.listen(0, '127.0.0.1', () => {
+-        const addr = server.address();
+-        const port = addr && typeof addr === 'object' ? addr.port : 0;
+-        if (!port) { unavailable(new Error('listen 未返回端口')); return; }
+-        mediaOrigin = { server, port, base: `http://127.0.0.1:${port}` };
+-        appendDiagLine('media-origin', { base: mediaOrigin.base });
+-        // 成功事实：**不发日志**，只走提示通道（D4）。文案惰性构造 —— 闸门关掉时不必拼。
+-        notice('media-origin', () => `壁纸媒体源已监听 ${mediaOrigin.base}（网页壁纸载荷不再经过插件路由的能力头栅栏）`);
+-        done(mediaOrigin);
+-      });
+-    });
+-    return mediaOriginTask;
++    // Codex adapter: all media stays on the authenticated primary mount.
++    // Never create an unprotected secondary loopback listener.
++    const codexOrigin = globalThis.__CODEX_DSH_MEDIA_ORIGIN__;
++    if (typeof codexOrigin === 'string' && /^http:\/\/127\.0\.0\.1:\d{4,5}\/dsh\/[a-f0-9]{64}$/.test(codexOrigin)) {
++      return Promise.resolve({ server: null, port: Number(new URL(codexOrigin).port), base: codexOrigin });
++    }
++    return Promise.resolve(null);
+   }
+   disposers.push(() => { try { mediaOrigin?.server?.close(); } catch { /* ignore */ } });
+ 
+diff --git a/lib/webwallgl/renderer.js b/lib/webwallgl/renderer.js
+index 54ac519..13e6ec9 100644
+--- a/lib/webwallgl/renderer.js
++++ b/lib/webwallgl/renderer.js
+@@ -43,7 +43,14 @@ let current = { type: pageType, src: pageSrc, mediaBase: pageMediaBase };
+ 
+ function diagOrigin() {
+   try {
+-    return current.mediaBase ? new URL(current.mediaBase, location.href).origin : "";
++    if (!current.mediaBase) return '';
++    const url = new URL(current.mediaBase, location.href);
++    // Codex adapter: keep diagnostic pixels inside the authenticated mount,
++    // including app://codex where URL.origin is the literal string 'null'.
++    if (/^\/dsh\/[a-f0-9]{64}\/wallpaper-engine\/scene-files\/?$/.test(url.pathname)) {
++      return url.protocol+'//'+url.host+url.pathname.replace(/\/scene-files\/?$/, '');
++    }
++    return url.origin;
+   } catch {
+     return "";
+   }
+diff --git a/packages/fonts/src/appearance-font-section.js b/packages/fonts/src/appearance-font-section.js
+index 4f2eeda..1cd29d1 100644
+--- a/packages/fonts/src/appearance-font-section.js
++++ b/packages/fonts/src/appearance-font-section.js
+@@ -15,6 +15,15 @@
+  * `lib/settings-schema.js` 的 `FONTSET_KEYS` 与 `fontsets/<id>.json`；本文件不持键、
+  * 不落盘、不注册 settings 段 —— 读值只走渲染 ctx 与入口解构的 host 显式键集。
+  */
++  // Optional native capability metadata exists only in the scoped Codex client.
++  // The ordinary DSH panel, including its terminal controls, remains unchanged.
++  function nativeFontUnavailable(id) {
++    try {
++      const hook = globalThis.__CODEX_WE_FONT_COMPONENTS__;
++      const value = typeof hook === "function" ? hook()?.unavailable?.[id] : null;
++      return typeof value === "string" ? value.slice(0, 180) : "";
++    } catch { return ""; }
++  }
+   // ── 字族下拉的**选项**（一处生成，四张表共用）────────────────────────────────
+   // 两组：内置族键（FONT_FAMILY_LABELS，栈写死在 client.js）+ **本机字体**
+   // （宿主枚举出来的族名，经 systemFontKeyOf 变成 `sys:` 族键，见 src/system-fonts.js）。
+@@ -82,6 +91,7 @@
+ 
+   // ── 全局 / 终端字体两行 + 本机字体状态行 ──
+   function renderFontGlobalFamily(sel, onGlobalFamily, onComponentFamily, onRefreshSystemFonts) {
++    const terminalUnavailable = nativeFontUnavailable("terminal");
+     return React.createElement(React.Fragment, null,
+     // ── 全局字体 / 终端字体：本机字体的两个入口 ──────────────────────────────
+     // 两行一个形状。**全局**是"默认"不是"强制"：角色表与组件表里单独设过的仍以那里为准
+@@ -100,7 +110,7 @@
+         familyOptions(sel, { skipInherit: true, current: sanitizeFamilyKey(sel.globalFamily) }),
+       ),
+     ),
+-    React.createElement("div", { className: "we-picker__ctl", key: "terminal-family" },
++    !terminalUnavailable && React.createElement("div", { className: "we-picker__ctl", key: "terminal-family" },
+       ctlText(weT("终端字体"), weT("对话里的终端块 + 侧栏终端面板（dsh-ssh）；与「高级字体设置 → 终端」同一项")),
+       React.createElement("select", {
+         value: fontFamilyKeyOf((sel.componentFonts.terminal || {}).family),
+@@ -112,6 +122,9 @@
+         familyOptions(sel, { current: fontFamilyKeyOf((sel.componentFonts.terminal || {}).family) }),
+       ),
+     ),
++    terminalUnavailable && React.createElement("div", { className: "we-picker__row", key: "terminal-unavailable" },
++      React.createElement("span", { className: "we-picker__hint" }, terminalUnavailable),
++    ),
+     // 「本机字体」那一组的状态行 + 重新扫描：在途 / 取不到 / 按文件名推测都要说出来
+     //（后两种用户会以为坏了；推测那种不说的话，用户会以为系统里真有那个族名）。
+     React.createElement("div", { className: "we-picker__row", key: "sys-font-note" },
+@@ -269,7 +282,7 @@
+           ),
+         ),
+         React.createElement("tbody", null,
+-      COMPONENT_FONT_TARGETS.map((target) => {
++      COMPONENT_FONT_TARGETS.filter((target) => !nativeFontUnavailable(target.id)).map((target) => {
+         const c = sel.componentFonts[target.id] || {};
+         // 未填时**直接显示 DSH 当前默认值**（启动自探测时顺带读回的 computed 值）。
+         const d = (typeof componentFontDefaults === "function"
+diff --git a/src/api-client.js b/src/api-client.js
+index fa828f5..3f3512e 100644
+--- a/src/api-client.js
++++ b/src/api-client.js
+@@ -33,11 +33,14 @@
+  *   · 路径一律经 `apiUrl()` 补前缀，禁止把裸路径直接交给 fetch（棘轮守卫检查的也是这一点）。
+  */
+ 
+-const BASE = '/wallpaper-engine';
++// Codex adapter: scope plugin traffic without changing native app fetch.
++const BASE = typeof globalThis.__CODEX_WE_API_BASE__ === 'string'
++  ? globalThis.__CODEX_WE_API_BASE__.replace(/\/+$/, '') : '/wallpaper-engine';
+ 
+ /** 拼出带前缀的 URL（path 允许已含前缀 / 已含查询串 / 是绝对或 data:/blob: URL —— 后者原样返回）。 */
+ function apiUrl(path) {
+   const p = String(path == null ? '' : path);
++  if (p.startsWith('/wallpaper-engine')) return BASE + p.slice('/wallpaper-engine'.length);
+   // 绝对 URL = 带 scheme 的任何地址（含 dsh-app:// 等自定义协议）——只认 http(s) 的话，
+   // 会把这类地址在自定义协议 origin 下重新拼接成畸形路径（实测症状：
+   // 应用侧封面恒 404，而同路径 curl 200）。
+@@ -52,6 +55,49 @@ function pickFetch(injected) {
+   return null;
+ }
+ 
++// Codex adapter: finite JSON messages cross the native CDP proxy; actual bytes are
++// staged by the authenticated host and streamed into the original DSH handler.
++async function codexUpload(doFetch, url, init, options) {
++  const body = init.body;
++  const binary = (typeof Blob !== 'undefined' && body instanceof Blob) ||
++    body instanceof ArrayBuffer || ArrayBuffer.isView(body);
++  if (!binary && typeof body !== 'string') return null;
++  const blob = binary && body instanceof Blob ? body : new Blob([body]);
++  if (!binary && blob.size <= 256 * 1024) return null;
++  if (!['POST', 'PUT', 'PATCH'].includes(init.method.toUpperCase())) return null;
++  if (!url.startsWith(BASE + '/')) throw new Error('Upload target is outside the DSH API');
++  const headers = {};
++  new Headers(init.headers || {}).forEach((value, key) => { headers[key] = value; });
++  if (!headers['content-type'] && blob.type) headers['content-type'] = blob.type;
++  const request = (action, payload, signal = init.signal) => doFetch(apiUrl('/codex-upload/' + action), {
++    method: 'POST', cache: 'no-store', signal,
++    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
++  });
++  let id;
++  try {
++    const start = await request('start', { route: '/wallpaper-engine' + url.slice(BASE.length),
++      method: init.method.toUpperCase(), headers, bytes: blob.size });
++    if (!start.ok) return start;
++    const state = await start.json(); id = state.id;
++    if (!/^[a-f0-9]{32}$/.test(id) || state.chunkBytes !== 256 * 1024) throw new Error('Invalid upload handshake');
++    for (let offset = 0, index = 0; offset < blob.size; offset += state.chunkBytes, index++) {
++      if (init.signal && init.signal.aborted) throw new DOMException('Upload aborted', 'AbortError');
++      const bytes = new Uint8Array(await blob.slice(offset, offset + state.chunkBytes).arrayBuffer());
++      let text = '';
++      for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
++      const response = await request('chunk', { id, index, data: btoa(text) });
++      if (!response.ok) return response;
++      if (typeof options.onUploadProgress === 'function') options.onUploadProgress({ loaded: offset + bytes.length, total: blob.size });
++    }
++    const response = await request('finish', { id });
++    id = null;
++    return response;
++  } finally {
++    // Cancellation is independent of an already aborted upload signal.
++    if (id) { try { await request('cancel', { id }, null); } catch {} }
++  }
++}
++
+ /**
+  * 发一个请求。**不抛**（除调用方显式要求）：返回
+  *   { ok, status, data, error, response }
+@@ -73,7 +119,9 @@ async function apiFetch(path, options) {
+   if (o.integrity) init.integrity = o.integrity;
+   let response;
+   try {
+-    response = await doFetch(url, init);
++    response = globalThis.__CODEX_WE_CHUNK_UPLOAD__ === true
++      ? await codexUpload(doFetch, url, init, o) : null;
++    if (!response) response = await doFetch(url, init);
+   } catch (e) {
+     // 中断（AbortError）与网络故障都走这里：调用点据 error 区分即可，不必各自 try/catch。
+     return { ok: false, status: 0, data: null, error: String((e && e.name) || (e && e.message) || e), url };
+diff --git a/src/client-media-frame.js b/src/client-media-frame.js
+index 9d83b2d..df4c2ad 100644
+--- a/src/client-media-frame.js
++++ b/src/client-media-frame.js
+@@ -345,7 +345,8 @@ function scheduleArtworkFetch(frame, m, artKey, hasArt) {
+     mediaArtTimer = 0;
+     mediaArtTimerSlow = false;
+     if (!frame.isConnected || !selection.sceneLiveActive || mediaArtKey !== artKey) return;
+-    fetchArtworkDataUrl(location.origin + m.thumbnail).then((d) => {
++    fetchArtworkDataUrl(typeof globalThis.__CODEX_WE_API_BASE__ === 'string'
++      ? apiUrl(m.thumbnail) : location.origin + m.thumbnail).then((d) => {
+       if (mediaArtKey !== artKey) return;
+       if (d) {
+         mediaArtData = d;
+diff --git a/src/client.js b/src/client.js
+index 0a0546c..fb03384 100644
+--- a/src/client.js
++++ b/src/client.js
+@@ -6235,6 +6235,52 @@ function apply(ctx) {
+ 
+ exports.apply = apply;
+ exports.inject = inject;
++// BEGIN CODEX CROSS-CLIENT REFRESH ADAPTER
++// Opt-in only: Codex's browser panel and injected native client share the
++// same host settings. Retain upstream write/race guards and never steal an
++// in-progress local edit to adopt an older host response.
++let codexRefreshInFlight = false;
++function codexRefreshBlocked() {
++  if (!selection.hostLoaded || persistDirty || persistTimer || persistInFlight || persistQueued ||
++      fontSetDirty || fontSetTimer) return true;
++  if (selection.editing || selection.pickerDraft || selection.editingUploadDir ||
++      selection.editingCacheDir || selection.editingWeAssetsDir || selection.glassPresetSaving ||
++      selection.glassPresetBusy || selection.uploading || selection.avatarBusy || selection.mascotBusy) return true;
++  try {
++    if (readCachedFontSet()?.dirty) return true;
++    if (document.querySelector('.we-rope--dragging')) return true;
++    const focused = document.activeElement;
++    if (focused?.closest?.('.we-picker, .we-wall-sidebar, .we-rope-dock') &&
++        (focused.matches('textarea, select, input:not([type=range]):not([type=checkbox]):not([type=button])') ||
++         focused.isContentEditable || focused.matches('input[type=range]:active'))) return true;
++  } catch { /* DOM/storage may be unavailable in a verification environment. */ }
++  return false;
++}
++async function codexRefresh() {
++  if (codexRefreshInFlight || codexRefreshBlocked()) return { changed: false, skipped: true };
++  codexRefreshInFlight = true;
++  const before = JSON.stringify({ settings: serializeSelection(), fonts: pickFontValues(), fontSet: selection.fontSetActive });
++  const previousId = selection.id;
++  const writes = persistWrites;
++  const fontWrites = fontSetWrites;
++  try {
++    await loadPersisted({ canAdopt: () => !codexRefreshBlocked() });
++    if (persistWrites !== writes || fontSetWrites !== fontWrites || codexRefreshBlocked()) return { changed: false, skipped: true };
++    if (selection.id !== previousId) await loadInventory();
++    if (persistWrites !== writes || fontSetWrites !== fontWrites || codexRefreshBlocked()) return { changed: false, skipped: true };
++    await loadFontSet({ canAdopt: () => !codexRefreshBlocked() });
++    if (persistWrites !== writes || fontSetWrites !== fontWrites || codexRefreshBlocked()) return { changed: false, skipped: true };
++    const after = JSON.stringify({ settings: serializeSelection(), fonts: pickFontValues(), fontSet: selection.fontSetActive });
++    if (before !== after) { reapplyAll(); applyEffects(); emit(); }
++    return { changed: before !== after, skipped: false };
++  } catch (error) {
++    return { changed: false, error: String(error?.message || error).slice(0, 240) };
++  } finally {
++    codexRefreshInFlight = false;
++  }
++}
++exports.codexRefresh = codexRefresh;
++// END CODEX CROSS-CLIENT REFRESH ADAPTER
+ // ── 桌宠联动（packages/pet-link）的宿主侧门面 ──────────────────────────────────────────
+ // 收口后这半边是**独立产物**（packages/pet-link/lib/client.pet-link.js）：它自己那一行求值，
+ // 再用 host.registerPetLink(petLink) 把服务登记回来。跨包求值顺序不保证（src/extension-registry.js
+diff --git a/src/font/apply.js b/src/font/apply.js
+index 70559d6..1d4a213 100644
+--- a/src/font/apply.js
++++ b/src/font/apply.js
+@@ -75,6 +75,24 @@ const WE_HOST_FAMILY_SOURCE = "--dsw-font-family";
+ let componentFontProbe = null;
+ let componentFontProbeAt = 0;
+ function componentFontAvailability() {
++  // Codex supplies this only inside its private client realm. Its native DOM
++  // has different component scopes; keep the original DSH probe unchanged
++  // everywhere else, and never claim canvas terminal fonts can be set by CSS.
++  try {
++    const hook = globalThis.__CODEX_WE_FONT_COMPONENTS__;
++    const native = typeof hook === "function" ? hook() : null;
++    if (native && Array.isArray(native.ids) && native.defaults
++      && typeof native.hasToken === "function") {
++      const known = new Set(COMPONENT_FONT_TARGETS.map((target) => target.id));
++      return {
++        ids: native.ids.filter((id) => known.has(id)),
++        defaults: native.defaults,
++        hookScopes: {},
++        hasToken: native.hasToken,
++        unavailable: native.unavailable || {},
++      };
++    }
++  } catch { /* Optional native adapter unavailable: retain the DSH probe. */ }
+   const stale = componentFontProbe !== null
+     && componentFontProbe.ids.length < COMPONENT_FONT_TARGETS.length
+     && Date.now() - componentFontProbeAt > 2000;
+diff --git a/src/fontset-store.js b/src/fontset-store.js
+index 8469eec..12575b8 100644
+--- a/src/fontset-store.js
++++ b/src/fontset-store.js
+@@ -270,6 +270,10 @@ async function loadFontSet() {
+     why = weT("宿主不可达（请求未完成）");
+   }
+ 
++  // Optional Codex cross-client refresh: preserve a local edit that began
++  // after the font GET started, before any write counter increment.
++  const codexCanAdopt = arguments[0] && arguments[0].canAdopt;
++  if (typeof codexCanAdopt === "function" && !codexCanAdopt()) return false;
+   if (values) {
+     activeFontSetId = id;
+     selection.fontSetActive = id; // 指针（= 宿主那边正在用的那份；能力判定用它）
+diff --git a/src/live-layer.js b/src/live-layer.js
+index 59b4bb3..e7abc75 100644
+--- a/src/live-layer.js
++++ b/src/live-layer.js
+@@ -143,6 +143,10 @@ function resolveSceneMediaBase() {
+ }
+ function liveRenderUrl(selLike) {
+   const isWeb = selLike.type === "web";
++  // Codex adapter: all renderer and payload URLs share the authenticated API
++  // mount. Custom app:// origins report location.origin === 'null', so compare
++  // parsed protocol/host and resolve against href rather than concatenating it.
++  const codexScoped = typeof globalThis.__CODEX_WE_API_BASE__ === "string";
+   // scene：src 是 mediaBase 下的 token（渲染页用它拼 httpSource）。
+   // web：src 必须是**完整入口 URL**（渲染页的 web 形态直接 iframe 加载它，
+   // 并从同目录取 project.json）—— 传 token 会被当成相对 URL 而 404。
+@@ -155,9 +159,17 @@ function liveRenderUrl(selLike) {
+   // 就是「预览图正常、随后整块黑」。只有旧 host / 媒体源启动失败时才回落成
+   // 应用源相对路径（浏览器形态照常可用）。
+   const webEntry = String(selLike.webLiveSrc || "");
+-  const src = isWeb
++  let src = isWeb
+     ? (/^https?:\/\//i.test(webEntry) ? webEntry : location.origin + webEntry)
+     : selLike.sceneLiveSrc;
++  if (isWeb && codexScoped) {
++    const expected = new URL(apiUrl('/scene-files/'), location.href);
++    const entry = new URL(webEntry.startsWith('/wallpaper-engine/') ? apiUrl(webEntry) : webEntry, location.href);
++    if (entry.protocol !== expected.protocol || entry.host !== expected.host || entry.username || entry.password || !entry.pathname.startsWith(expected.pathname)) {
++      throw new Error('Web wallpaper entry is outside the authenticated scene-files route');
++    }
++    src = entry.href;
++  }
+   const fit = SCENE_LIVE_FIT[selLike.objectFit] || "cover";
+   const fps = SCENE_LIVE_FPS_VALUES.includes(selLike.sceneLiveFps) ? selLike.sceneLiveFps : 30;
+   const muted = weAudioVolume() > 0 ? "false" : "true";
+@@ -168,9 +180,9 @@ function liveRenderUrl(selLike) {
+   // 那条路挤不过首帧 LIVE_FIRST_FRAME_MS 预算（那里还要买纹理解码与 shader 编译）。
+   // 网页壁纸**不走**这个源：它的入口是绝对 URL（webLiveSrc），mediaBase 对它只剩
+   //「诊断信标打哪个 origin」一个用途，保持原样以免多动一条已经通的链。
+-  const mediaBase = (isWeb ? (typeof location !== "undefined" && location.origin ? location.origin : "") : resolveSceneMediaBase())
+-    + SCENE_FILES_PATH;
+-  return "/wallpaper-engine/scene-live/index.html?type=" + (isWeb ? "web" : "scene")
++  const mediaBase = codexScoped ? new URL(apiUrl('/scene-files'),location.href).href
++    : (isWeb ? (typeof location !== "undefined" && location.origin ? location.origin : "") : resolveSceneMediaBase()) + SCENE_FILES_PATH;
++  return apiUrl('/scene-live/index.html') + "?type=" + (isWeb ? "web" : "scene")
+     // 网页壁纸必须严格沙箱：第三方 workshop HTML 不得继承 DSH 的 origin
+     //（否则可冒用宿主身份调宿主 API / 读宿主存储）——只给 allow-scripts，
+     // 控制经渲染页的 postMessage 通道下发，shim 由宿主注入 HTML 响应。
+diff --git a/src/persistence.js b/src/persistence.js
+index 151e5dd..c7cca68 100644
+--- a/src/persistence.js
++++ b/src/persistence.js
+@@ -242,6 +242,10 @@ async function loadPersisted() {
+     }
+   } catch { /* 宿主不可达：apiFetch 已不抛，这里兜住赋值/消毒期的异常 */ }
+ 
++  // Codex refresh is opt-in. A drag may start after the GET began but before
++  // its first input/write event; do not adopt while that local edit is active.
++  const codexCanAdopt = arguments[0] && arguments[0].canAdopt;
++  if (typeof codexCanAdopt === "function" && !codexCanAdopt()) return;
+   const stale = persistWrites !== writesAtStart;
+   if (hostOk && hostSettings && typeof hostSettings === "object") {
+     // Host is the truth: apply it and refresh the local cache copy — unless the
+diff --git a/src/video-layer.js b/src/video-layer.js
+index b96b7d2..08b1243 100644
+--- a/src/video-layer.js
++++ b/src/video-layer.js
+@@ -356,7 +356,8 @@ let mediaInfoAbort = null;
+  * `refreshMediaInfo` 采纳宿主"已有缓存"的回答都走它 —— 两处各拼一次字符串迟早漂移。
+  */
+ function transcodedUrlFor(token, fps) {
+-  return "/wallpaper-engine/transcoded/" + encodeURIComponent(token) + "?fps=" + fps;
++  // Codex adapter: preserve the original route through the scoped API prefix.
++  return apiUrl('/transcoded/') + encodeURIComponent(token) + "?fps=" + fps;
+ }
+ async function refreshMediaInfo(force) {
+   const token = selection.type === "video" && selection.url

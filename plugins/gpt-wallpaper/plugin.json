@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "gpt-wallpaper",
+  "version": "0.1.0",
+  "description": "复用 DSH 六页签，提供 Codex 的本地图片、视频、Scene 背景和玻璃外观适配。",
+  "license": "MIT",
+  "extensions": {"com.openai": {"requires_local_executor": true, "interface": {
+    "displayName": "GPT 动态壁纸",
+    "shortDescription": "本地场景与视频背景、玻璃和字体设置",
+    "longDescription": "自动读取本机 Steam 壁纸库，复用 DSH 的六页签界面。支持本地图片、视频、WebWallGL Scene、场景属性、按壁纸配置的鼠标互动、预设、玻璃、字体、系统频谱和 Now Playing。原生 Web、动态 SceneScript、同页官方桌宠与终端画布字体仍有限制。首次聊天背景启用由原生管理器确认重启；兼容性以真实界面检测为准。",
+    "developerName": "SDKsun",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": ["打开可视化壁纸库", "把壁纸透出度调到 60%", "暂停动态壁纸"]
+  }}}
+}

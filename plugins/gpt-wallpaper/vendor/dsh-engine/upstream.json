@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/elysia395/dsh-wallpaper-engine",
+  "commit": "7ba44b2424e55b70fe28fea753a7abf27ae7cdb3",
+  "license": "MIT",
+  "sourceDirectory": "source",
+  "buildCommand": "node source/scripts/build-client.mjs",
+  "adapterChanges": {
+    "source/src/api-client.js": "Scoped absolute API base and opt-in native chunk upload for byte-exact large JSON/binary bodies; normalize legacy routes without modifying global fetch.",
+    "source/src/client.js": "Opt-in codexRefresh export reloads host settings/fonts and selected-item inventory, preserving upstream pending-write and local-edit guards.",
+    "source/src/persistence.js": "Optional canAdopt callback prevents cross-client refresh overwriting a drag started while a settings GET is in flight; normal calls unchanged.",
+    "source/src/fontset-store.js": "Same optional canAdopt guard for active font-set refresh; normal startup unchanged.",
+    "source/src/font/apply.js": "Optional scoped Codex component availability hook; original DSH font probing remains unchanged without the hook.",
+    "source/packages/fonts/src/appearance-font-section.js": "Native capability hook explains unavailable canvas terminal font controls without changing ordinary DSH UI.",
+    "source/src/live-layer.js": "Scene and Web frame, payload and entry URLs use the authenticated native or loopback API base.",
+    "source/src/video-layer.js": "Transcoded media URLs retain the authenticated API prefix.",
+    "source/runtime-deps/webwallgl": "Scoped local-assets and diagnostic paths preserve the Codex capability mount, retaining original DSH default paths elsewhere.",
+    "source/lib/media-origin.js": "Reuse authenticated primary /dsh/token mount; never start a secondary unprotected media listener.",
+    "source/node_modules/dsh-plugin-wallpaper-engine-*": "Local ESM package-resolution wrappers for all seven original subpackages.",
+    "source/node_modules/webwallgl": "Recreated at runtime from source/runtime-deps/webwallgl, pinned WebWallGL 3.0.0 and its license."
+  },
+  "clientArtifacts": [
+    "source/lib/client.js",
+    "source/packages/fonts/lib/client.fonts.js",
+    "source/packages/fx/lib/client.fx.js",
+    "source/packages/parallax/lib/client.parallax.js",
+    "source/packages/pet-link/lib/client.pet-link.js"
+  ]
+}

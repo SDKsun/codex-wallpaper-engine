@@ -1,0 +1,15 @@
+{
+  "name": "codex-wallpaper-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Wallpaper Engine backgrounds and glass UI for Codex on Windows",
+  "license": "MIT",
+  "type": "module",
+  "engines": {"node": ">=24"},
+  "scripts": {
+    "prepare:vendor": "node scripts/prepare-vendor.mjs",
+    "test": "node --test tests/*.test.mjs plugins/gpt-wallpaper/vendor/dsh-engine/tests/*.test.mjs",
+    "check:publication": "node scripts/check-publication.mjs",
+    "build": "powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File scripts/build-plugin.ps1"
+  }
+}

@@ -1,0 +1,2912 @@
+diff --git a/macos/assets/dream-skin.css b/macos/assets/dream-skin.css
+index f9b4f75..b8f3fa7 100644
+--- a/macos/assets/dream-skin.css
++++ b/macos/assets/dream-skin.css
+@@ -1530,7 +1530,8 @@ html[data-dream-skin="active"] [data-local-conversation-final-assistant="true"][
+   --dream-wallpaper-cover: 0%;
+ }
+ 
+-#codex-dream-skin-media {
++#codex-dream-skin-media,
++#codex-dream-skin-scene {
+   position: fixed;
+   z-index: -1;
+   inset: 0;
+@@ -1547,6 +1548,11 @@ html[data-dream-skin="active"]:has(#codex-dream-skin-media) body {
+   background-color: transparent !important;
+ }
+ 
++html[data-dream-skin="active"]:has(#codex-dream-skin-scene[data-dream-scene-ready="true"]) body {
++  background-image: none !important;
++  background-color: transparent !important;
++}
++
+ /* Codex 26.930 footer paint layers. Keep the native footer/composer geometry
+    and hit targets; clear only the aria-hidden, pointer-inert decorations. */
+ html[data-dream-skin="active"][data-dream-art-wide="true"]:not([data-dream-task-mode="off"])
+diff --git a/macos/assets/renderer-inject.js b/macos/assets/renderer-inject.js
+index 258d152..e7bac71 100644
+--- a/macos/assets/renderer-inject.js
++++ b/macos/assets/renderer-inject.js
+@@ -21,6 +21,7 @@
+   const STYLE_REGISTRY_KEY = "__CODEX_DREAM_SKIN_STYLE_SHEETS__";
+   const STYLE_ID = "codex-dream-skin-style";
+   const MEDIA_ID = "codex-dream-skin-media";
++  const SCENE_ID = "codex-dream-skin-scene";
+   const SHELL_ATTR = "data-dream-shell";
+   const PART_ATTR = "data-ds-part";
+   const COMPOSER_BORDER_BRIDGES = [
+@@ -76,7 +77,7 @@
+   }
+   // Cache structural :has() predicates as element markers. Chromium otherwise
+   // re-evaluates these stylesheet conditions during every native hover update.
+-  const CSS_PREDICATES = [{"selector":":has([role=\"main\"])","attribute":"data-dream-has-0","branches":[{"selector":"[role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-0]), :is(* [role=\"main\"]):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]))","attribute":"data-dream-has-1","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-1]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"])","attribute":"data-dream-has-2","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-2]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]):not(*))"},{"selector":":has([data-testid=\"home-icon\"])","attribute":"data-dream-has-3","branches":[{"selector":"[data-testid=\"home-icon\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-3]), :is(* [data-testid=\"home-icon\"]):not(*))"},{"selector":":has(> .home-banners)","attribute":"data-dream-has-4","branches":[{"selector":".home-banners","relation":"child"}],"replacement":":is(:where([data-dream-has-4]), :is(* > .home-banners):not(*))"},{"selector":":has([data-ds-part=\"main\"])","attribute":"data-dream-has-5","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-5]), :is(* [data-ds-part=\"main\"]):not(*))"},{"selector":":has([data-ds-part=\"main\"], [data-ds-part=\"home\"])","attribute":"data-dream-has-6","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"},{"selector":"[data-ds-part=\"home\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-6]), :is(* [data-ds-part=\"main\"], * [data-ds-part=\"home\"]):not(*))"},{"selector":":has(:is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"]))","attribute":"data-dream-has-7","branches":[{"selector":":is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-7]), :is(* :is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])):not(*))"},{"selector":":has(input[type=\"text\"])","attribute":"data-dream-has-8","branches":[{"selector":"input[type=\"text\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-8]), :is(* input[type=\"text\"]):not(*))"},{"selector":":has(> input[type=\"text\"])","attribute":"data-dream-has-9","branches":[{"selector":"input[type=\"text\"]","relation":"child"}],"replacement":":is(:where([data-dream-has-9]), :is(* > input[type=\"text\"]):not(*))"},{"selector":":has([data-codex-composer-root])","attribute":"data-dream-has-10","branches":[{"selector":"[data-codex-composer-root]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-10]), :is(* [data-codex-composer-root]):not(*))"},{"selector":":has(*)","attribute":"data-dream-has-11","branches":[{"selector":"*","relation":"descendant"}],"replacement":":is(:where([data-dream-has-11]), :is(* *):not(*))"},{"selector":":has(> .horizontal-scroll-fade-mask .group\\/project-selector)","attribute":"data-dream-has-12","branches":[{"selector":".horizontal-scroll-fade-mask .group\\/project-selector","relation":"child"}],"replacement":":is(:where([data-dream-has-12]), :is(* > .horizontal-scroll-fade-mask .group\\/project-selector):not(*))"},{"selector":":has(#codex-dream-skin-media)","attribute":"data-dream-has-13","branches":[{"selector":"#codex-dream-skin-media","relation":"descendant"}],"replacement":":is(:where([data-dream-has-13]), :is(* #codex-dream-skin-media):not(*))"},{"selector":":has(> [data-mention-list-scroll-area])","attribute":"data-dream-has-14","branches":[{"selector":"[data-mention-list-scroll-area]","relation":"child"}],"replacement":":is(:where([data-dream-has-14]), :is(* > [data-mention-list-scroll-area]):not(*))"},{"selector":":has(~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-15","branches":[{"selector":"[role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table","relation":"sibling"}],"replacement":":is(:where([data-dream-has-15]), :is(* ~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has([data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-16","branches":[{"selector":"[data-testid=\"image-preview-dismiss-area\"] table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-16]), :is(* [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has(table)","attribute":"data-dream-has-17","branches":[{"selector":"table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-17]), :is(* table):not(*))"}]
++  const CSS_PREDICATES = [{"selector":":has([role=\"main\"])","attribute":"data-dream-has-0","branches":[{"selector":"[role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-0]), :is(* [role=\"main\"]):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]))","attribute":"data-dream-has-1","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-1]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"])","attribute":"data-dream-has-2","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-2]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]):not(*))"},{"selector":":has([data-testid=\"home-icon\"])","attribute":"data-dream-has-3","branches":[{"selector":"[data-testid=\"home-icon\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-3]), :is(* [data-testid=\"home-icon\"]):not(*))"},{"selector":":has(> .home-banners)","attribute":"data-dream-has-4","branches":[{"selector":".home-banners","relation":"child"}],"replacement":":is(:where([data-dream-has-4]), :is(* > .home-banners):not(*))"},{"selector":":has([data-ds-part=\"main\"])","attribute":"data-dream-has-5","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-5]), :is(* [data-ds-part=\"main\"]):not(*))"},{"selector":":has([data-ds-part=\"main\"], [data-ds-part=\"home\"])","attribute":"data-dream-has-6","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"},{"selector":"[data-ds-part=\"home\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-6]), :is(* [data-ds-part=\"main\"], * [data-ds-part=\"home\"]):not(*))"},{"selector":":has(:is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"]))","attribute":"data-dream-has-7","branches":[{"selector":":is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-7]), :is(* :is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])):not(*))"},{"selector":":has(input[type=\"text\"])","attribute":"data-dream-has-8","branches":[{"selector":"input[type=\"text\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-8]), :is(* input[type=\"text\"]):not(*))"},{"selector":":has(> input[type=\"text\"])","attribute":"data-dream-has-9","branches":[{"selector":"input[type=\"text\"]","relation":"child"}],"replacement":":is(:where([data-dream-has-9]), :is(* > input[type=\"text\"]):not(*))"},{"selector":":has([data-codex-composer-root])","attribute":"data-dream-has-10","branches":[{"selector":"[data-codex-composer-root]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-10]), :is(* [data-codex-composer-root]):not(*))"},{"selector":":has(*)","attribute":"data-dream-has-11","branches":[{"selector":"*","relation":"descendant"}],"replacement":":is(:where([data-dream-has-11]), :is(* *):not(*))"},{"selector":":has(> .horizontal-scroll-fade-mask .group\\/project-selector)","attribute":"data-dream-has-12","branches":[{"selector":".horizontal-scroll-fade-mask .group\\/project-selector","relation":"child"}],"replacement":":is(:where([data-dream-has-12]), :is(* > .horizontal-scroll-fade-mask .group\\/project-selector):not(*))"},{"selector":":has(#codex-dream-skin-media)","attribute":"data-dream-has-13","branches":[{"selector":"#codex-dream-skin-media","relation":"descendant"}],"replacement":":is(:where([data-dream-has-13]), :is(* #codex-dream-skin-media):not(*))"},{"selector":":has(#codex-dream-skin-scene[data-dream-scene-ready=\"true\"])","attribute":"data-dream-has-14","branches":[{"selector":"#codex-dream-skin-scene[data-dream-scene-ready=\"true\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-14]), :is(* #codex-dream-skin-scene[data-dream-scene-ready=\"true\"]):not(*))"},{"selector":":has(> [data-mention-list-scroll-area])","attribute":"data-dream-has-15","branches":[{"selector":"[data-mention-list-scroll-area]","relation":"child"}],"replacement":":is(:where([data-dream-has-15]), :is(* > [data-mention-list-scroll-area]):not(*))"},{"selector":":has(~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-16","branches":[{"selector":"[role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table","relation":"sibling"}],"replacement":":is(:where([data-dream-has-16]), :is(* ~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has([data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-17","branches":[{"selector":"[data-testid=\"image-preview-dismiss-area\"] table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-17]), :is(* [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has(table)","attribute":"data-dream-has-18","branches":[{"selector":"table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-18]), :is(* table):not(*))"}]
+     .filter((item) => cssText.includes(item.selector));
+   for (const { selector, replacement } of CSS_PREDICATES) {
+     cssText = cssText.replaceAll(selector, replacement);
+@@ -169,6 +170,19 @@
+   })();
+ 
+   const rawMedia = THEME.media && typeof THEME.media === "object" ? THEME.media : {};
++  // This field is supplied only by the Windows local addon reader, never by
++  // imported theme JSON. Validate again before creating a browsing context.
++  const sceneMatch = typeof THEME.sceneLiveUrl === "string"
++    ? /^http:\/\/127\.0\.0\.1:([0-9]{4,5})\/s\/[a-f0-9]{64}\/scene\/[a-f0-9]{24}$/.exec(THEME.sceneLiveUrl) : null;
++  const sceneLiveUrl = sceneMatch && Number(sceneMatch[1]) >= 1024 && Number(sceneMatch[1]) <= 65535
++    ? THEME.sceneLiveUrl : null;
++  const sceneOrigin = sceneLiveUrl ? sceneLiveUrl.split("/").slice(0, 3).join("/") : null;
++  let sceneFrame = null;
++  let sceneReady = false;
++  let sceneTimer = null;
++  let scenePointerTimer = null;
++  let sceneDownAt = 0;
++  const sceneStats = { status: sceneLiveUrl ? "pending" : "disabled", error: null };
+   const numberIn = (value, min, max, fallback) => {
+     const numeric = Number(value);
+     return Number.isFinite(numeric) && numeric >= min && numeric <= max ? numeric : fallback;
+@@ -523,7 +537,7 @@
+     // Video wallpapers cover the full window like a wide artwork. Without
+     // this, the shell keeps its opaque --ds-bg and the fixed video layer is
+     // only visible around the content surfaces, never through them.
+-    const videoActive = videoConfig.mediaType === "video";
++    const videoActive = videoConfig.mediaType === "video" || Boolean(sceneLiveUrl);
+     const wide = videoActive || profile?.wide || profile?.aspect === "wide" || profile?.aspect === "ultrawide";
+     const aspect = profile?.aspect || "unknown";
+     const focusXValue = `${(clamp(focusX, 0, 1) * 100).toFixed(2)}%`;
+@@ -747,11 +761,12 @@
+     // layer; "none" keeps the upstream veil gradients translucent over it.
+     // Poster transport swaps in one captured frame as static art once the
+     // video element has been reclaimed.
+-    const effectiveArtUrl = posterArtUrl || artUrl;
++    const effectiveArtUrl = sceneReady ? null : posterArtUrl || artUrl;
+     setStyleProperty(root, "--dream-skin-art", effectiveArtUrl ? `url("${effectiveArtUrl}")` : "none");
+     applyTheme(root, shell);
+     applyArtMetadata(root);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return shell;
+   };
+@@ -779,10 +794,96 @@
+     setStylePropertyIfChanged(root?.style, "--dream-wallpaper-cover",
+       `${Math.round((1 - numeric) * 100)}%`);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return numeric;
+   };
+ 
++  const postScene = (data) => {
++    if (sceneFrame?.contentWindow) sceneFrame.contentWindow.postMessage(data, sceneOrigin);
++  };
++  const failScene = (message) => {
++    if (!sceneFrame) return;
++    if (sceneTimer) clearTimeout(sceneTimer);
++    sceneTimer = null;
++    sceneReady = false;
++    sceneStats.status = "error";
++    sceneStats.error = String(message || "场景加载失败").slice(0, 240);
++    sceneFrame.style.setProperty("visibility", "hidden");
++    sceneFrame.removeAttribute("data-dream-scene-ready");
++    postScene({ type: "gpt-wallpaper:pause", paused: true });
++    applyRootState(document.documentElement);
++    refreshPredicates();
++  };
++  const sceneMessageHandler = (event) => {
++    if (!sceneFrame || event.source !== sceneFrame.contentWindow || event.origin !== sceneOrigin) return;
++    if (event.data?.type === "gpt-wallpaper:ready") {
++      if (sceneStats.status === "error") return;
++      if (sceneTimer) clearTimeout(sceneTimer);
++      sceneTimer = null;
++      sceneReady = true;
++      sceneStats.status = "ready";
++      sceneFrame.style.setProperty("visibility", "visible");
++      sceneFrame.setAttribute("data-dream-scene-ready", "true");
++      const fallback = document.getElementById(MEDIA_ID);
++      fallback?.pause?.();
++      fallback?.remove();
++      applyRootState(document.documentElement);
++      refreshPredicates();
++    } else if (event.data?.type === "gpt-wallpaper:error") failScene(event.data.message);
++  };
++  const sceneBlockedHandler = (event) => {
++    if (sceneLiveUrl && (event.blockedURI === sceneOrigin || event.blockedURI === sceneLiveUrl) &&
++        /^(frame-src|child-src|default-src)$/.test(event.effectiveDirective || "")) {
++      failScene("Codex 内容安全策略阻止本地场景嵌入；保留预览图");
++    }
++  };
++  const sendScenePointer = (event, buttons) => {
++    if (!sceneReady || document.hidden || videoConfig.wallpaperReveal <= 0) return;
++    const u = Number(event.clientX) / (window.innerWidth || 1);
++    const v = Number(event.clientY) / (window.innerHeight || 1);
++    if (!Number.isFinite(u) || !Number.isFinite(v)) return;
++    postScene({ type: "gpt-wallpaper:pointer", u: Math.max(0, Math.min(1, u)),
++      v: Math.max(0, Math.min(1, v)), buttons: buttons & 1,
++      mods: { shift: Boolean(event.shiftKey), ctrl: Boolean(event.ctrlKey),
++        alt: Boolean(event.altKey), meta: Boolean(event.metaKey) } });
++  };
++  const sceneMoveHandler = (event) => sendScenePointer(event, event.buttons || 0);
++  const sceneDownHandler = (event) => {
++    if (event.button !== 0) return;
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = null;
++    sceneDownAt = Date.now();
++    sendScenePointer(event, 1);
++  };
++  const sceneUpHandler = (event) => {
++    if (event.button !== 0) return;
++    const delay = Math.max(0, 20 - (Date.now() - sceneDownAt));
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = setTimeout(() => { scenePointerTimer = null; sendScenePointer(event, 0); }, delay);
++  };
++  const sceneLeaveHandler = () => postScene({ type: "gpt-wallpaper:leave" });
++  const syncSceneElement = () => {
++    if (!sceneLiveUrl || window[DISABLED_KEY] || !document.body || !shellElementPresent()) return;
++    if (!sceneFrame) {
++      sceneFrame = document.createElement("iframe");
++      sceneFrame.id = SCENE_ID;
++      sceneFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
++      sceneFrame.setAttribute("aria-hidden", "true");
++      sceneFrame.setAttribute("tabindex", "-1");
++      sceneFrame.setAttribute("referrerpolicy", "no-referrer");
++      sceneFrame.style.setProperty("visibility", "hidden");
++      sceneFrame.src = sceneLiveUrl;
++      document.body.appendChild(sceneFrame);
++      sceneStats.status = "loading";
++      sceneTimer = setTimeout(() => {
++        sceneTimer = null;
++        if (!sceneReady) failScene("场景未返回可用画面，可能被内容安全策略阻止；保留预览图");
++      }, 90000);
++    }
++    postScene({ type: "gpt-wallpaper:pause", paused: document.hidden || videoConfig.wallpaperReveal <= 0 || sceneStats.status === "error" });
++  };
++
+   // Poster transport (remote desktop sessions): decode exactly one frame out
+   // of the transferred video, paint it as static CSS art, then drop the video
+   // element and revoke the blob so nothing keeps decoding or compositing.
+@@ -861,6 +962,7 @@
+     // the media element on a cleaned-up or replaced install.
+     if (window[DISABLED_KEY] || window[STATE_KEY]?.installToken !== installToken) return null;
+     let media = document.getElementById(MEDIA_ID);
++    if (sceneReady) { media?.pause?.(); media?.remove(); return null; }
+     if (videoConfig.mediaType !== "video" || !shellElementPresent()) {
+       media?.remove();
+       return null;
+@@ -1428,6 +1530,12 @@
+     if (state?.visibilityHandler) {
+       document.removeEventListener?.("visibilitychange", state.visibilityHandler);
+     }
++    if (sceneTimer) clearTimeout(sceneTimer);
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    for (const [type, handler] of sceneListeners) window.removeEventListener?.(type, handler, true);
++    document.removeEventListener?.("securitypolicyviolation", sceneBlockedHandler);
++    sceneFrame?.remove();
++    sceneFrame = null;
+     stopStream();
+     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+     mediaUrl = null;
+@@ -1525,6 +1633,7 @@
+     },
+     mediaUrl: null,
+     streamStats: null,
++    sceneStats,
+     beginMedia,
+     appendMedia,
+     commitMedia,
+@@ -1532,6 +1641,12 @@
+     stopStream,
+     detectShellAppearance,
+   };
++  const sceneListeners = sceneLiveUrl ? [
++    ["message", sceneMessageHandler], ["mousemove", sceneMoveHandler],
++    ["mousedown", sceneDownHandler], ["mouseup", sceneUpHandler], ["blur", sceneLeaveHandler],
++  ] : [];
++  for (const [type, handler] of sceneListeners) window.addEventListener?.(type, handler, { capture: true, passive: true });
++  if (sceneLiveUrl) document.addEventListener?.("securitypolicyviolation", sceneBlockedHandler);
+   const firstEnsureStartedAt = now();
+   ensure({ root: true, parts: true });
+   const initialScope = refreshScope();
+@@ -1578,6 +1693,7 @@
+   window[STATE_KEY].timer = timer;
+   const visibilityHandler = () => {
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+   };
+   if (typeof document.addEventListener === "function") {
+diff --git a/runtime/dream-skin.css b/runtime/dream-skin.css
+index 97960be..d22f99b 100644
+--- a/runtime/dream-skin.css
++++ b/runtime/dream-skin.css
+@@ -1530,7 +1530,8 @@ html[data-dream-skin="active"] [data-local-conversation-final-assistant="true"][
+   --dream-wallpaper-cover: 0%;
+ }
+ 
+-#codex-dream-skin-media {
++#codex-dream-skin-media,
++#codex-dream-skin-scene {
+   position: fixed;
+   z-index: -1;
+   inset: 0;
+@@ -1547,6 +1548,11 @@ html[data-dream-skin="active"]:has(#codex-dream-skin-media) body {
+   background-color: transparent !important;
+ }
+ 
++html[data-dream-skin="active"]:has(#codex-dream-skin-scene[data-dream-scene-ready="true"]) body {
++  background-image: none !important;
++  background-color: transparent !important;
++}
++
+ /* Codex 26.930 footer paint layers. Keep the native footer/composer geometry
+    and hit targets; clear only the aria-hidden, pointer-inert decorations. */
+ html[data-dream-skin="active"][data-dream-art-wide="true"]:not([data-dream-task-mode="off"])
+diff --git a/runtime/renderer-inject.js b/runtime/renderer-inject.js
+index c7c0a9a..c043506 100644
+--- a/runtime/renderer-inject.js
++++ b/runtime/renderer-inject.js
+@@ -21,6 +21,7 @@
+   const STYLE_REGISTRY_KEY = "__CODEX_DREAM_SKIN_STYLE_SHEETS__";
+   const STYLE_ID = "codex-dream-skin-style";
+   const MEDIA_ID = "codex-dream-skin-media";
++  const SCENE_ID = "codex-dream-skin-scene";
+   const SHELL_ATTR = "data-dream-shell";
+   const PART_ATTR = "data-ds-part";
+   const COMPOSER_BORDER_BRIDGES = [
+@@ -169,6 +170,19 @@
+   })();
+ 
+   const rawMedia = THEME.media && typeof THEME.media === "object" ? THEME.media : {};
++  // This field is supplied only by the Windows local addon reader, never by
++  // imported theme JSON. Validate again before creating a browsing context.
++  const sceneMatch = typeof THEME.sceneLiveUrl === "string"
++    ? /^http:\/\/127\.0\.0\.1:([0-9]{4,5})\/s\/[a-f0-9]{64}\/scene\/[a-f0-9]{24}$/.exec(THEME.sceneLiveUrl) : null;
++  const sceneLiveUrl = sceneMatch && Number(sceneMatch[1]) >= 1024 && Number(sceneMatch[1]) <= 65535
++    ? THEME.sceneLiveUrl : null;
++  const sceneOrigin = sceneLiveUrl ? sceneLiveUrl.split("/").slice(0, 3).join("/") : null;
++  let sceneFrame = null;
++  let sceneReady = false;
++  let sceneTimer = null;
++  let scenePointerTimer = null;
++  let sceneDownAt = 0;
++  const sceneStats = { status: sceneLiveUrl ? "pending" : "disabled", error: null };
+   const numberIn = (value, min, max, fallback) => {
+     const numeric = Number(value);
+     return Number.isFinite(numeric) && numeric >= min && numeric <= max ? numeric : fallback;
+@@ -523,7 +537,7 @@
+     // Video wallpapers cover the full window like a wide artwork. Without
+     // this, the shell keeps its opaque --ds-bg and the fixed video layer is
+     // only visible around the content surfaces, never through them.
+-    const videoActive = videoConfig.mediaType === "video";
++    const videoActive = videoConfig.mediaType === "video" || Boolean(sceneLiveUrl);
+     const wide = videoActive || profile?.wide || profile?.aspect === "wide" || profile?.aspect === "ultrawide";
+     const aspect = profile?.aspect || "unknown";
+     const focusXValue = `${(clamp(focusX, 0, 1) * 100).toFixed(2)}%`;
+@@ -747,11 +761,12 @@
+     // layer; "none" keeps the upstream veil gradients translucent over it.
+     // Poster transport swaps in one captured frame as static art once the
+     // video element has been reclaimed.
+-    const effectiveArtUrl = posterArtUrl || artUrl;
++    const effectiveArtUrl = sceneReady ? null : posterArtUrl || artUrl;
+     setStyleProperty(root, "--dream-skin-art", effectiveArtUrl ? `url("${effectiveArtUrl}")` : "none");
+     applyTheme(root, shell);
+     applyArtMetadata(root);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return shell;
+   };
+@@ -779,10 +794,96 @@
+     setStylePropertyIfChanged(root?.style, "--dream-wallpaper-cover",
+       `${Math.round((1 - numeric) * 100)}%`);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return numeric;
+   };
+ 
++  const postScene = (data) => {
++    if (sceneFrame?.contentWindow) sceneFrame.contentWindow.postMessage(data, sceneOrigin);
++  };
++  const failScene = (message) => {
++    if (!sceneFrame) return;
++    if (sceneTimer) clearTimeout(sceneTimer);
++    sceneTimer = null;
++    sceneReady = false;
++    sceneStats.status = "error";
++    sceneStats.error = String(message || "场景加载失败").slice(0, 240);
++    sceneFrame.style.setProperty("visibility", "hidden");
++    sceneFrame.removeAttribute("data-dream-scene-ready");
++    postScene({ type: "gpt-wallpaper:pause", paused: true });
++    applyRootState(document.documentElement);
++    refreshPredicates();
++  };
++  const sceneMessageHandler = (event) => {
++    if (!sceneFrame || event.source !== sceneFrame.contentWindow || event.origin !== sceneOrigin) return;
++    if (event.data?.type === "gpt-wallpaper:ready") {
++      if (sceneStats.status === "error") return;
++      if (sceneTimer) clearTimeout(sceneTimer);
++      sceneTimer = null;
++      sceneReady = true;
++      sceneStats.status = "ready";
++      sceneFrame.style.setProperty("visibility", "visible");
++      sceneFrame.setAttribute("data-dream-scene-ready", "true");
++      const fallback = document.getElementById(MEDIA_ID);
++      fallback?.pause?.();
++      fallback?.remove();
++      applyRootState(document.documentElement);
++      refreshPredicates();
++    } else if (event.data?.type === "gpt-wallpaper:error") failScene(event.data.message);
++  };
++  const sceneBlockedHandler = (event) => {
++    if (sceneLiveUrl && (event.blockedURI === sceneOrigin || event.blockedURI === sceneLiveUrl) &&
++        /^(frame-src|child-src|default-src)$/.test(event.effectiveDirective || "")) {
++      failScene("Codex 内容安全策略阻止本地场景嵌入；保留预览图");
++    }
++  };
++  const sendScenePointer = (event, buttons) => {
++    if (!sceneReady || document.hidden || videoConfig.wallpaperReveal <= 0) return;
++    const u = Number(event.clientX) / (window.innerWidth || 1);
++    const v = Number(event.clientY) / (window.innerHeight || 1);
++    if (!Number.isFinite(u) || !Number.isFinite(v)) return;
++    postScene({ type: "gpt-wallpaper:pointer", u: Math.max(0, Math.min(1, u)),
++      v: Math.max(0, Math.min(1, v)), buttons: buttons & 1,
++      mods: { shift: Boolean(event.shiftKey), ctrl: Boolean(event.ctrlKey),
++        alt: Boolean(event.altKey), meta: Boolean(event.metaKey) } });
++  };
++  const sceneMoveHandler = (event) => sendScenePointer(event, event.buttons || 0);
++  const sceneDownHandler = (event) => {
++    if (event.button !== 0) return;
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = null;
++    sceneDownAt = Date.now();
++    sendScenePointer(event, 1);
++  };
++  const sceneUpHandler = (event) => {
++    if (event.button !== 0) return;
++    const delay = Math.max(0, 20 - (Date.now() - sceneDownAt));
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = setTimeout(() => { scenePointerTimer = null; sendScenePointer(event, 0); }, delay);
++  };
++  const sceneLeaveHandler = () => postScene({ type: "gpt-wallpaper:leave" });
++  const syncSceneElement = () => {
++    if (!sceneLiveUrl || window[DISABLED_KEY] || !document.body || !shellElementPresent()) return;
++    if (!sceneFrame) {
++      sceneFrame = document.createElement("iframe");
++      sceneFrame.id = SCENE_ID;
++      sceneFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
++      sceneFrame.setAttribute("aria-hidden", "true");
++      sceneFrame.setAttribute("tabindex", "-1");
++      sceneFrame.setAttribute("referrerpolicy", "no-referrer");
++      sceneFrame.style.setProperty("visibility", "hidden");
++      sceneFrame.src = sceneLiveUrl;
++      document.body.appendChild(sceneFrame);
++      sceneStats.status = "loading";
++      sceneTimer = setTimeout(() => {
++        sceneTimer = null;
++        if (!sceneReady) failScene("场景未返回可用画面，可能被内容安全策略阻止；保留预览图");
++      }, 90000);
++    }
++    postScene({ type: "gpt-wallpaper:pause", paused: document.hidden || videoConfig.wallpaperReveal <= 0 || sceneStats.status === "error" });
++  };
++
+   // Poster transport (remote desktop sessions): decode exactly one frame out
+   // of the transferred video, paint it as static CSS art, then drop the video
+   // element and revoke the blob so nothing keeps decoding or compositing.
+@@ -861,6 +962,7 @@
+     // the media element on a cleaned-up or replaced install.
+     if (window[DISABLED_KEY] || window[STATE_KEY]?.installToken !== installToken) return null;
+     let media = document.getElementById(MEDIA_ID);
++    if (sceneReady) { media?.pause?.(); media?.remove(); return null; }
+     if (videoConfig.mediaType !== "video" || !shellElementPresent()) {
+       media?.remove();
+       return null;
+@@ -1428,6 +1530,12 @@
+     if (state?.visibilityHandler) {
+       document.removeEventListener?.("visibilitychange", state.visibilityHandler);
+     }
++    if (sceneTimer) clearTimeout(sceneTimer);
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    for (const [type, handler] of sceneListeners) window.removeEventListener?.(type, handler, true);
++    document.removeEventListener?.("securitypolicyviolation", sceneBlockedHandler);
++    sceneFrame?.remove();
++    sceneFrame = null;
+     stopStream();
+     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+     mediaUrl = null;
+@@ -1525,6 +1633,7 @@
+     },
+     mediaUrl: null,
+     streamStats: null,
++    sceneStats,
+     beginMedia,
+     appendMedia,
+     commitMedia,
+@@ -1532,6 +1641,12 @@
+     stopStream,
+     detectShellAppearance,
+   };
++  const sceneListeners = sceneLiveUrl ? [
++    ["message", sceneMessageHandler], ["mousemove", sceneMoveHandler],
++    ["mousedown", sceneDownHandler], ["mouseup", sceneUpHandler], ["blur", sceneLeaveHandler],
++  ] : [];
++  for (const [type, handler] of sceneListeners) window.addEventListener?.(type, handler, { capture: true, passive: true });
++  if (sceneLiveUrl) document.addEventListener?.("securitypolicyviolation", sceneBlockedHandler);
+   const firstEnsureStartedAt = now();
+   ensure({ root: true, parts: true });
+   const initialScope = refreshScope();
+@@ -1578,6 +1693,7 @@
+   window[STATE_KEY].timer = timer;
+   const visibilityHandler = () => {
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+   };
+   if (typeof document.addEventListener === "function") {
+diff --git a/tools/renderer-runtime.test.mjs b/tools/renderer-runtime.test.mjs
+index 5552cbd..bb6987b 100644
+--- a/tools/renderer-runtime.test.mjs
++++ b/tools/renderer-runtime.test.mjs
+@@ -252,6 +252,7 @@ function makeFixture({
+     return node;
+   };
+   const videoElements = [];
++  const iframeElements = [];
+   const canvasElements = [];
+   // A DOM-ish HTMLMediaElement: enough surface for the poster transport to
+   // attach listeners, seek, capture a frame and reclaim the element, with
+@@ -329,9 +330,19 @@ function makeFixture({
+       if (tag === "style") return makeStyleNode();
+       if (tag === "video") return makeVideoElement();
+       if (tag === "canvas") return makeCanvasElement();
++      if (tag === "iframe") {
++        const node = makeDomNode("iframe");
++        node.messages = [];
++        node.contentWindow = { postMessage(data, origin) { node.messages.push({ data, origin }); } };
++        node.remove = () => { nodes.delete(node.id); node.parentElement = null; };
++        iframeElements.push(node);
++        return node;
++      }
+       return { tagName: tag };
+     },
+     getElementById(id) { return nodes.get(id) || null; },
++    addEventListener(type, callback) { listeners.set(`document:${type}`, callback); },
++    removeEventListener(type) { listeners.delete(`document:${type}`); },
+     querySelector(selector) {
+       return (selectorNodes.get(selector) || [])[0] || null;
+     },
+@@ -355,6 +366,8 @@ function makeFixture({
+     replaceSync(text) { this.text = text; }
+   }
+   const window = {
++    innerWidth: 1000,
++    innerHeight: 800,
+     navigation,
+     matchMedia() {
+       return {
+@@ -363,8 +376,8 @@ function makeFixture({
+         removeEventListener(type) { listeners.delete(`media:${type}`); },
+       };
+     },
+-    addEventListener() {},
+-    removeEventListener() {},
++    addEventListener(type, callback) { listeners.set(`window:${type}`, callback); },
++    removeEventListener(type) { listeners.delete(`window:${type}`); },
+   };
+   const context = {
+     window,
+@@ -417,7 +430,7 @@ function makeFixture({
+   return {
+     addDynamicMessage, attrs, canvasElements, context, document, domNodes, flushTimers,
+     intervals, listeners, nodes, observers, partFixtures, payloadFor, revoked, root,
+-    rootClasses, rootStyle, timers, videoElements, window,
++    rootClasses, rootStyle, timers, videoElements, iframeElements, window,
+   };
+ }
+ 
+@@ -1436,6 +1449,51 @@ export async function runRendererRuntimeTest(assetRoot) {
+   assert.ok(posterCleanup.revoked.includes(cleanupBlobUrl),
+     "Cleanup must revoke the pending media blob.");
+ 
++  const liveSceneUrl = `http://127.0.0.1:18765/s/${"a".repeat(64)}/scene/${"b".repeat(24)}`;
++  const scene = makeFixture({ nativeAppearance: "dark" });
++  vm.runInNewContext(scene.payloadFor({ sceneLiveUrl: liveSceneUrl }), scene.context);
++  const sceneState = scene.window.__CODEX_DREAM_SKIN_STATE__;
++  const frame = scene.document.getElementById("codex-dream-skin-scene");
++  assert.ok(frame);
++  assert.equal(frame.src, liveSceneUrl);
++  assert.equal(frame.getAttribute("sandbox"), "allow-scripts allow-same-origin");
++  assert.equal(frame.getAttribute("tabindex"), "-1");
++  assert.equal(frame.style.values.get("visibility"), "hidden");
++  const receive = scene.listeners.get("window:message");
++  receive({ source: frame.contentWindow, origin: "http://untrusted.example", data: { type: "gpt-wallpaper:ready" } });
++  assert.equal(sceneState.sceneStats.status, "loading");
++  receive({ source: {}, origin: "http://127.0.0.1:18765", data: { type: "gpt-wallpaper:ready" } });
++  assert.equal(sceneState.sceneStats.status, "loading");
++  receive({ source: frame.contentWindow, origin: "http://127.0.0.1:18765", data: { type: "gpt-wallpaper:ready" } });
++  assert.equal(sceneState.sceneStats.status, "ready");
++  assert.equal(frame.style.values.get("visibility"), "visible");
++  assert.equal(scene.rootStyle.values.get("--dream-skin-art"), "none");
++  scene.listeners.get("window:mousemove")({ clientX: 250, clientY: 600, buttons: 0 });
++  const pointer = frame.messages.at(-1);
++  assert.equal(pointer.origin, "http://127.0.0.1:18765");
++  assert.equal(pointer.data.type, "gpt-wallpaper:pointer");
++  assert.equal(pointer.data.u, .25); assert.equal(pointer.data.v, .75);
++  scene.listeners.get("window:mousedown")({ clientX: 250, clientY: 600, button: 0 });
++  assert.equal(frame.messages.at(-1).data.buttons, 1);
++  scene.listeners.get("window:mouseup")({ clientX: 250, clientY: 600, button: 0 });
++  scene.flushTimers(25);
++  assert.equal(frame.messages.at(-1).data.buttons, 0);
++  scene.document.hidden = true;
++  scene.listeners.get("document:visibilitychange")();
++  assert.equal(frame.messages.at(-1).data.paused, true);
++  sceneState.cleanup();
++  assert.equal(scene.document.getElementById("codex-dream-skin-scene"), null);
++  assert.equal(scene.listeners.has("window:message"), false);
++  assert.equal(scene.listeners.has("window:mousemove"), false);
++
++  const blockedScene = makeFixture({ nativeAppearance: "dark" });
++  vm.runInNewContext(blockedScene.payloadFor({ sceneLiveUrl: liveSceneUrl }), blockedScene.context);
++  blockedScene.listeners.get("document:securitypolicyviolation")({ blockedURI: "http://127.0.0.1:18765", effectiveDirective: "frame-src" });
++  assert.equal(blockedScene.window.__CODEX_DREAM_SKIN_STATE__.sceneStats.status, "error");
++  assert.notEqual(blockedScene.rootStyle.values.get("--dream-skin-art"), "none");
++  assert.equal(blockedScene.timers.size, 0);
++  blockedScene.window.__CODEX_DREAM_SKIN_STATE__.cleanup();
++
+   console.log(`PASS: unified renderer runtime (${path.basename(assetRoot)})`);
+ }
+ 
+diff --git a/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs b/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
+index 842a3eb..3819a40 100644
+--- a/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
++++ b/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
+@@ -20,7 +20,9 @@ internal sealed class DreamSkinService : IDisposable
+ 
+   public async Task StartAsync(CancellationToken cancellationToken = default)
+   {
+-    var arguments = new List<string> { "-Port", "9335" };
++    // Large Scene packages and first-run WebGL shader compilation can outlive
++    // the legacy image-only startup window. Keep verification mandatory/bounded.
++    var arguments = new List<string> { "-Port", "9335", "-VerificationTimeoutSeconds", "300" };
+     var status = GetStatus();
+     if (!status.WatcherRunning && status.CodexRunning)
+     {
+@@ -35,7 +37,21 @@ internal sealed class DreamSkinService : IDisposable
+       _runtime.StartScript,
+       arguments,
+       cancellationToken,
+-      captureOutput: false);
++      captureOutput: true);
++    if (result.ExitCode != 0)
++    {
++      // Keep the failure available after the manager's message box is closed.
++      var diagnostic = $"[{DateTimeOffset.Now:O}] Exit code: {result.ExitCode}\r\n" +
++        result.StandardOutput + "\r\n" + result.StandardError;
++      if (diagnostic.Length > 16 * 1024) diagnostic = diagnostic[^16384..];
++      try
++      {
++        File.WriteAllText(Path.Combine(_runtime.StateRoot, "startup-error.log"), diagnostic,
++          new System.Text.UTF8Encoding(false));
++      }
++      catch (IOException) { }
++      catch (UnauthorizedAccessException) { }
++    }
+     result.ThrowIfFailed("启动 Codex 动态壁纸");
+   }
+ 
+diff --git a/windows/app/CodexDreamSkin.Manager/Models.cs b/windows/app/CodexDreamSkin.Manager/Models.cs
+index 1abd8d7..aaa3f6e 100644
+--- a/windows/app/CodexDreamSkin.Manager/Models.cs
++++ b/windows/app/CodexDreamSkin.Manager/Models.cs
+@@ -3,6 +3,34 @@ using System.Text.Json.Serialization;
+ 
+ namespace CodexDreamSkin.Manager;
+ 
++// Codex/AppX can virtualize LocalApplicationData differently from an independent
++// WMI-launched process. Direct shortcuts and the broker use the same shared base.
++internal static class ManagerLocalData
++{
++  public static string Root
++  {
++    get
++    {
++      var configured = Environment.GetEnvironmentVariable("CODEX_DREAM_SKIN_LOCAL_APPDATA");
++      if (string.IsNullOrEmpty(configured))
++      {
++        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
++        var local = Environment.GetEnvironmentVariable("LOCALAPPDATA");
++        if (string.IsNullOrEmpty(local))
++          local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
++        var normal = Path.Combine(profile, "AppData", "Local");
++        configured = string.Equals(Path.GetFullPath(local).TrimEnd(Path.DirectorySeparatorChar),
++          Path.GetFullPath(normal).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)
++          ? Path.Combine(profile, ".codex", "wallpaper-local") : local;
++      }
++      if (!Path.IsPathFullyQualified(configured) || configured.StartsWith(@"\\", StringComparison.Ordinal) ||
++          configured.IndexOfAny(new[] { '\0', '\r', '\n' }) >= 0)
++        throw new InvalidOperationException("CODEX_DREAM_SKIN_LOCAL_APPDATA 必须为本地绝对目录。");
++      return Path.GetFullPath(configured);
++    }
++  }
++}
++
+ internal enum WallpaperKind
+ {
+   Image,
+@@ -134,7 +162,7 @@ internal sealed class SettingsStore
+   public SettingsStore()
+   {
+     SettingsPath = Path.Combine(
+-      Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
++      ManagerLocalData.Root,
+       "CodexDreamSkin",
+       "manager-settings.json");
+   }
+diff --git a/windows/app/CodexDreamSkin.Manager/PowerShellRunner.cs b/windows/app/CodexDreamSkin.Manager/PowerShellRunner.cs
+index 55f8d61..7a4c86f 100644
+--- a/windows/app/CodexDreamSkin.Manager/PowerShellRunner.cs
++++ b/windows/app/CodexDreamSkin.Manager/PowerShellRunner.cs
+@@ -1,4 +1,5 @@
+ using System.Diagnostics;
++using System.Text;
+ 
+ namespace CodexDreamSkin.Manager;
+ 
+@@ -58,7 +59,7 @@ internal sealed class PowerShellRunner
+     }
+     startInfo.ArgumentList.Add("-NoProfile");
+     startInfo.ArgumentList.Add("-ExecutionPolicy");
+-    startInfo.ArgumentList.Add("Bypass");
++    startInfo.ArgumentList.Add("RemoteSigned");
+     startInfo.ArgumentList.Add("-File");
+     startInfo.ArgumentList.Add(script);
+     foreach (var argument in arguments)
+@@ -67,17 +68,22 @@ internal sealed class PowerShellRunner
+     }
+ 
+     var nodeDirectory = Path.GetDirectoryName(_runtime.NodePath)!;
++    startInfo.Environment["LOCALAPPDATA"] = ManagerLocalData.Root;
++    startInfo.Environment["CODEX_DREAM_SKIN_LOCAL_APPDATA"] = ManagerLocalData.Root;
+     startInfo.Environment["PATH"] = nodeDirectory + Path.PathSeparator +
+       (startInfo.Environment.TryGetValue("PATH", out var path) ? path : Environment.GetEnvironmentVariable("PATH"));
+ 
+     using var process = new Process { StartInfo = startInfo };
+     process.Start();
++    var output = new StringBuilder();
++    var errors = new StringBuilder();
++    using var drainCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+     var outputTask = captureOutput
+-      ? process.StandardOutput.ReadToEndAsync(cancellationToken)
+-      : Task.FromResult(string.Empty);
++      ? PumpBoundedAsync(process.StandardOutput, output, drainCancellation.Token)
++      : Task.CompletedTask;
+     var errorTask = captureOutput
+-      ? process.StandardError.ReadToEndAsync(cancellationToken)
+-      : Task.FromResult(string.Empty);
++      ? PumpBoundedAsync(process.StandardError, errors, drainCancellation.Token)
++      : Task.CompletedTask;
+     try
+     {
+       await process.WaitForExitAsync(cancellationToken);
+@@ -95,9 +101,42 @@ internal sealed class PowerShellRunner
+     {
+       return new ProcessResult(process.ExitCode, string.Empty, string.Empty);
+     }
+-    return new ProcessResult(
+-      process.ExitCode,
+-      await outputTask,
+-      await errorTask);
++    // A launched app may inherit the pipe handles and outlive this script.
++    // Never wait for descendant exit just to obtain the parent's diagnostics.
++    var drained = Task.WhenAll(outputTask, errorTask);
++    if (await Task.WhenAny(drained, Task.Delay(500, CancellationToken.None)) != drained)
++    {
++      drainCancellation.Cancel();
++      process.StandardOutput.Dispose();
++      process.StandardError.Dispose();
++    }
++    await drained;
++    return new ProcessResult(process.ExitCode, Snapshot(output), Snapshot(errors));
++  }
++
++  private static string Snapshot(StringBuilder buffer)
++  {
++    lock (buffer) return buffer.ToString();
++  }
++
++  private static async Task PumpBoundedAsync(StreamReader reader, StringBuilder output,
++    CancellationToken cancellationToken)
++  {
++    var buffer = new char[4096];
++    try
++    {
++      int read;
++      while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) > 0)
++      {
++        lock (output)
++        {
++          output.Append(buffer, 0, read);
++          if (output.Length > 64 * 1024) output.Remove(0, output.Length - 64 * 1024);
++        }
++      }
++    }
++    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
++    catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested) { }
++    catch (IOException) when (cancellationToken.IsCancellationRequested) { }
+   }
+ }
+diff --git a/windows/app/CodexDreamSkin.Manager/Program.cs b/windows/app/CodexDreamSkin.Manager/Program.cs
+index af8029e..4d82d8e 100644
+--- a/windows/app/CodexDreamSkin.Manager/Program.cs
++++ b/windows/app/CodexDreamSkin.Manager/Program.cs
+@@ -43,12 +43,10 @@ internal static class Program
+     }
+     catch (Exception exception)
+     {
+-      var logPath = Path.Combine(
+-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+-        "CodexDreamSkin",
+-        "manager-error.log");
++      var logPath = "日志目录不可用";
+       try
+       {
++        logPath = Path.Combine(ManagerLocalData.Root, "CodexDreamSkin", "manager-error.log");
+         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+         File.AppendAllText(logPath, $"[{DateTimeOffset.Now:O}] {exception}\r\n");
+       }
+@@ -86,7 +84,8 @@ internal static class SelfTest
+       {
+         return 3;
+       }
+-      return RunnerReturnsAfterParentExit(runtime) ? 0 : 5;
++      return RunnerSharesStateDirectory(runtime) && RunnerReturnsAfterParentExit(runtime, false) &&
++        RunnerReturnsAfterParentExit(runtime, true) ? 0 : 5;
+     }
+     catch
+     {
+@@ -94,7 +93,27 @@ internal static class SelfTest
+     }
+   }
+ 
+-  private static bool RunnerReturnsAfterParentExit(RuntimeProvisioner runtime)
++  private static bool RunnerSharesStateDirectory(RuntimeProvisioner runtime)
++  {
++    var temporary = Path.Combine(Path.GetTempPath(), "codex-shared-state-" + Guid.NewGuid().ToString("N"));
++    Directory.CreateDirectory(temporary);
++    var script = Path.Combine(temporary, "read-state-environment.ps1");
++    try
++    {
++      File.WriteAllText(script,
++        "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); Write-Output $env:LOCALAPPDATA; Write-Output $env:CODEX_DREAM_SKIN_LOCAL_APPDATA",
++        new System.Text.UTF8Encoding(false));
++      using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(8));
++      var result = new PowerShellRunner(runtime).RunScriptAsync(script, Array.Empty<string>(), cancellation.Token)
++        .GetAwaiter().GetResult();
++      var lines = result.StandardOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
++      return result.ExitCode == 0 && lines.Length == 2 &&
++        lines.All(line => string.Equals(line, ManagerLocalData.Root, StringComparison.OrdinalIgnoreCase));
++    }
++    finally { Directory.Delete(temporary, true); }
++  }
++
++  private static bool RunnerReturnsAfterParentExit(RuntimeProvisioner runtime, bool captureOutput)
+   {
+     var temporary = Path.Combine(
+       Path.GetTempPath(),
+@@ -107,6 +126,8 @@ internal static class SelfTest
+       File.WriteAllText(
+         script,
+         """
++        Write-Output 'startup diagnostic fixture'
++        [Console]::Error.WriteLine('startup error fixture')
+         $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+         $stdout = Join-Path $PSScriptRoot 'child-stdout.log'
+         $stderr = Join-Path $PSScriptRoot 'child-stderr.log'
+@@ -116,6 +137,7 @@ internal static class SelfTest
+         ) -WindowStyle Hidden -PassThru `
+           -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+         Set-Content -LiteralPath $pidFile -Value $child.Id -Encoding Ascii
++        exit 7
+         """,
+         new System.Text.UTF8Encoding(false));
+ 
+@@ -126,7 +148,7 @@ internal static class SelfTest
+           script,
+           Array.Empty<string>(),
+           cancellation.Token,
+-          captureOutput: false)
++          captureOutput: captureOutput)
+         .GetAwaiter()
+         .GetResult();
+       stopwatch.Stop();
+@@ -138,7 +160,9 @@ internal static class SelfTest
+         childProcessId = parsedProcessId;
+       }
+ 
+-      return result.ExitCode == 0 &&
++      return result.ExitCode == 7 &&
++        (!captureOutput || (result.StandardOutput.Contains("startup diagnostic fixture", StringComparison.Ordinal) &&
++          result.StandardError.Contains("startup error fixture", StringComparison.Ordinal))) &&
+         childProcessId.HasValue &&
+         stopwatch.Elapsed < TimeSpan.FromSeconds(3);
+     }
+diff --git a/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs b/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
+index ca278bf..620e331 100644
+--- a/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
++++ b/windows/app/CodexDreamSkin.Manager/RuntimeProvisioner.cs
+@@ -40,7 +40,7 @@ internal sealed class RuntimeProvisioner
+   public RuntimeProvisioner()
+   {
+     StateRoot = Path.Combine(
+-      Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
++      ManagerLocalData.Root,
+       "CodexDreamSkin");
+     var version = _assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+     RuntimeRoot = Path.Combine(StateRoot, "manager-runtime", version);
+diff --git a/windows/assets/dream-skin.css b/windows/assets/dream-skin.css
+index 5cf2bbd..7e2d10d 100644
+--- a/windows/assets/dream-skin.css
++++ b/windows/assets/dream-skin.css
+@@ -1530,7 +1530,8 @@ html[data-dream-skin="active"] [data-local-conversation-final-assistant="true"][
+   --dream-wallpaper-cover: 0%;
+ }
+ 
+-#codex-dream-skin-media {
++#codex-dream-skin-media,
++#codex-dream-skin-scene {
+   position: fixed;
+   z-index: -1;
+   inset: 0;
+@@ -1547,6 +1548,11 @@ html[data-dream-skin="active"]:has(#codex-dream-skin-media) body {
+   background-color: transparent !important;
+ }
+ 
++html[data-dream-skin="active"]:has(#codex-dream-skin-scene[data-dream-scene-ready="true"]) body {
++  background-image: none !important;
++  background-color: transparent !important;
++}
++
+ /* Codex 26.930 footer paint layers. Keep the native footer/composer geometry
+    and hit targets; clear only the aria-hidden, pointer-inert decorations. */
+ html[data-dream-skin="active"][data-dream-art-wide="true"]:not([data-dream-task-mode="off"])
+diff --git a/windows/assets/renderer-inject.js b/windows/assets/renderer-inject.js
+index 258d152..e7bac71 100644
+--- a/windows/assets/renderer-inject.js
++++ b/windows/assets/renderer-inject.js
+@@ -21,6 +21,7 @@
+   const STYLE_REGISTRY_KEY = "__CODEX_DREAM_SKIN_STYLE_SHEETS__";
+   const STYLE_ID = "codex-dream-skin-style";
+   const MEDIA_ID = "codex-dream-skin-media";
++  const SCENE_ID = "codex-dream-skin-scene";
+   const SHELL_ATTR = "data-dream-shell";
+   const PART_ATTR = "data-ds-part";
+   const COMPOSER_BORDER_BRIDGES = [
+@@ -76,7 +77,7 @@
+   }
+   // Cache structural :has() predicates as element markers. Chromium otherwise
+   // re-evaluates these stylesheet conditions during every native hover update.
+-  const CSS_PREDICATES = [{"selector":":has([role=\"main\"])","attribute":"data-dream-has-0","branches":[{"selector":"[role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-0]), :is(* [role=\"main\"]):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]))","attribute":"data-dream-has-1","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-1]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"])","attribute":"data-dream-has-2","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-2]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]):not(*))"},{"selector":":has([data-testid=\"home-icon\"])","attribute":"data-dream-has-3","branches":[{"selector":"[data-testid=\"home-icon\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-3]), :is(* [data-testid=\"home-icon\"]):not(*))"},{"selector":":has(> .home-banners)","attribute":"data-dream-has-4","branches":[{"selector":".home-banners","relation":"child"}],"replacement":":is(:where([data-dream-has-4]), :is(* > .home-banners):not(*))"},{"selector":":has([data-ds-part=\"main\"])","attribute":"data-dream-has-5","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-5]), :is(* [data-ds-part=\"main\"]):not(*))"},{"selector":":has([data-ds-part=\"main\"], [data-ds-part=\"home\"])","attribute":"data-dream-has-6","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"},{"selector":"[data-ds-part=\"home\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-6]), :is(* [data-ds-part=\"main\"], * [data-ds-part=\"home\"]):not(*))"},{"selector":":has(:is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"]))","attribute":"data-dream-has-7","branches":[{"selector":":is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-7]), :is(* :is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])):not(*))"},{"selector":":has(input[type=\"text\"])","attribute":"data-dream-has-8","branches":[{"selector":"input[type=\"text\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-8]), :is(* input[type=\"text\"]):not(*))"},{"selector":":has(> input[type=\"text\"])","attribute":"data-dream-has-9","branches":[{"selector":"input[type=\"text\"]","relation":"child"}],"replacement":":is(:where([data-dream-has-9]), :is(* > input[type=\"text\"]):not(*))"},{"selector":":has([data-codex-composer-root])","attribute":"data-dream-has-10","branches":[{"selector":"[data-codex-composer-root]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-10]), :is(* [data-codex-composer-root]):not(*))"},{"selector":":has(*)","attribute":"data-dream-has-11","branches":[{"selector":"*","relation":"descendant"}],"replacement":":is(:where([data-dream-has-11]), :is(* *):not(*))"},{"selector":":has(> .horizontal-scroll-fade-mask .group\\/project-selector)","attribute":"data-dream-has-12","branches":[{"selector":".horizontal-scroll-fade-mask .group\\/project-selector","relation":"child"}],"replacement":":is(:where([data-dream-has-12]), :is(* > .horizontal-scroll-fade-mask .group\\/project-selector):not(*))"},{"selector":":has(#codex-dream-skin-media)","attribute":"data-dream-has-13","branches":[{"selector":"#codex-dream-skin-media","relation":"descendant"}],"replacement":":is(:where([data-dream-has-13]), :is(* #codex-dream-skin-media):not(*))"},{"selector":":has(> [data-mention-list-scroll-area])","attribute":"data-dream-has-14","branches":[{"selector":"[data-mention-list-scroll-area]","relation":"child"}],"replacement":":is(:where([data-dream-has-14]), :is(* > [data-mention-list-scroll-area]):not(*))"},{"selector":":has(~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-15","branches":[{"selector":"[role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table","relation":"sibling"}],"replacement":":is(:where([data-dream-has-15]), :is(* ~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has([data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-16","branches":[{"selector":"[data-testid=\"image-preview-dismiss-area\"] table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-16]), :is(* [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has(table)","attribute":"data-dream-has-17","branches":[{"selector":"table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-17]), :is(* table):not(*))"}]
++  const CSS_PREDICATES = [{"selector":":has([role=\"main\"])","attribute":"data-dream-has-0","branches":[{"selector":"[role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-0]), :is(* [role=\"main\"]):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]))","attribute":"data-dream-has-1","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-1]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"])):not(*))"},{"selector":":has(main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"])","attribute":"data-dream-has-2","branches":[{"selector":"main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-2]), :is(* main:is(.main-surface, [data-app-shell-main-surface], [class*=\"_MainContentSurface_\"]):not([data-app-shell-active-page=\"false\"], [data-app-shell-active-page=\"false\"] *) [role=\"main\"]):not(*))"},{"selector":":has([data-testid=\"home-icon\"])","attribute":"data-dream-has-3","branches":[{"selector":"[data-testid=\"home-icon\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-3]), :is(* [data-testid=\"home-icon\"]):not(*))"},{"selector":":has(> .home-banners)","attribute":"data-dream-has-4","branches":[{"selector":".home-banners","relation":"child"}],"replacement":":is(:where([data-dream-has-4]), :is(* > .home-banners):not(*))"},{"selector":":has([data-ds-part=\"main\"])","attribute":"data-dream-has-5","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-5]), :is(* [data-ds-part=\"main\"]):not(*))"},{"selector":":has([data-ds-part=\"main\"], [data-ds-part=\"home\"])","attribute":"data-dream-has-6","branches":[{"selector":"[data-ds-part=\"main\"]","relation":"descendant"},{"selector":"[data-ds-part=\"home\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-6]), :is(* [data-ds-part=\"main\"], * [data-ds-part=\"home\"]):not(*))"},{"selector":":has(:is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"]))","attribute":"data-dream-has-7","branches":[{"selector":":is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])","relation":"descendant"}],"replacement":":is(:where([data-dream-has-7]), :is(* :is([class*=\"_homeUtilityBar_\"], [class*=\"_ComposerHomeUtilityBar_\"])):not(*))"},{"selector":":has(input[type=\"text\"])","attribute":"data-dream-has-8","branches":[{"selector":"input[type=\"text\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-8]), :is(* input[type=\"text\"]):not(*))"},{"selector":":has(> input[type=\"text\"])","attribute":"data-dream-has-9","branches":[{"selector":"input[type=\"text\"]","relation":"child"}],"replacement":":is(:where([data-dream-has-9]), :is(* > input[type=\"text\"]):not(*))"},{"selector":":has([data-codex-composer-root])","attribute":"data-dream-has-10","branches":[{"selector":"[data-codex-composer-root]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-10]), :is(* [data-codex-composer-root]):not(*))"},{"selector":":has(*)","attribute":"data-dream-has-11","branches":[{"selector":"*","relation":"descendant"}],"replacement":":is(:where([data-dream-has-11]), :is(* *):not(*))"},{"selector":":has(> .horizontal-scroll-fade-mask .group\\/project-selector)","attribute":"data-dream-has-12","branches":[{"selector":".horizontal-scroll-fade-mask .group\\/project-selector","relation":"child"}],"replacement":":is(:where([data-dream-has-12]), :is(* > .horizontal-scroll-fade-mask .group\\/project-selector):not(*))"},{"selector":":has(#codex-dream-skin-media)","attribute":"data-dream-has-13","branches":[{"selector":"#codex-dream-skin-media","relation":"descendant"}],"replacement":":is(:where([data-dream-has-13]), :is(* #codex-dream-skin-media):not(*))"},{"selector":":has(#codex-dream-skin-scene[data-dream-scene-ready=\"true\"])","attribute":"data-dream-has-14","branches":[{"selector":"#codex-dream-skin-scene[data-dream-scene-ready=\"true\"]","relation":"descendant"}],"replacement":":is(:where([data-dream-has-14]), :is(* #codex-dream-skin-scene[data-dream-scene-ready=\"true\"]):not(*))"},{"selector":":has(> [data-mention-list-scroll-area])","attribute":"data-dream-has-15","branches":[{"selector":"[data-mention-list-scroll-area]","relation":"child"}],"replacement":":is(:where([data-dream-has-15]), :is(* > [data-mention-list-scroll-area]):not(*))"},{"selector":":has(~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-16","branches":[{"selector":"[role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table","relation":"sibling"}],"replacement":":is(:where([data-dream-has-16]), :is(* ~ [role=\"dialog\"] [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has([data-testid=\"image-preview-dismiss-area\"] table)","attribute":"data-dream-has-17","branches":[{"selector":"[data-testid=\"image-preview-dismiss-area\"] table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-17]), :is(* [data-testid=\"image-preview-dismiss-area\"] table):not(*))"},{"selector":":has(table)","attribute":"data-dream-has-18","branches":[{"selector":"table","relation":"descendant"}],"replacement":":is(:where([data-dream-has-18]), :is(* table):not(*))"}]
+     .filter((item) => cssText.includes(item.selector));
+   for (const { selector, replacement } of CSS_PREDICATES) {
+     cssText = cssText.replaceAll(selector, replacement);
+@@ -169,6 +170,19 @@
+   })();
+ 
+   const rawMedia = THEME.media && typeof THEME.media === "object" ? THEME.media : {};
++  // This field is supplied only by the Windows local addon reader, never by
++  // imported theme JSON. Validate again before creating a browsing context.
++  const sceneMatch = typeof THEME.sceneLiveUrl === "string"
++    ? /^http:\/\/127\.0\.0\.1:([0-9]{4,5})\/s\/[a-f0-9]{64}\/scene\/[a-f0-9]{24}$/.exec(THEME.sceneLiveUrl) : null;
++  const sceneLiveUrl = sceneMatch && Number(sceneMatch[1]) >= 1024 && Number(sceneMatch[1]) <= 65535
++    ? THEME.sceneLiveUrl : null;
++  const sceneOrigin = sceneLiveUrl ? sceneLiveUrl.split("/").slice(0, 3).join("/") : null;
++  let sceneFrame = null;
++  let sceneReady = false;
++  let sceneTimer = null;
++  let scenePointerTimer = null;
++  let sceneDownAt = 0;
++  const sceneStats = { status: sceneLiveUrl ? "pending" : "disabled", error: null };
+   const numberIn = (value, min, max, fallback) => {
+     const numeric = Number(value);
+     return Number.isFinite(numeric) && numeric >= min && numeric <= max ? numeric : fallback;
+@@ -523,7 +537,7 @@
+     // Video wallpapers cover the full window like a wide artwork. Without
+     // this, the shell keeps its opaque --ds-bg and the fixed video layer is
+     // only visible around the content surfaces, never through them.
+-    const videoActive = videoConfig.mediaType === "video";
++    const videoActive = videoConfig.mediaType === "video" || Boolean(sceneLiveUrl);
+     const wide = videoActive || profile?.wide || profile?.aspect === "wide" || profile?.aspect === "ultrawide";
+     const aspect = profile?.aspect || "unknown";
+     const focusXValue = `${(clamp(focusX, 0, 1) * 100).toFixed(2)}%`;
+@@ -747,11 +761,12 @@
+     // layer; "none" keeps the upstream veil gradients translucent over it.
+     // Poster transport swaps in one captured frame as static art once the
+     // video element has been reclaimed.
+-    const effectiveArtUrl = posterArtUrl || artUrl;
++    const effectiveArtUrl = sceneReady ? null : posterArtUrl || artUrl;
+     setStyleProperty(root, "--dream-skin-art", effectiveArtUrl ? `url("${effectiveArtUrl}")` : "none");
+     applyTheme(root, shell);
+     applyArtMetadata(root);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return shell;
+   };
+@@ -779,10 +794,96 @@
+     setStylePropertyIfChanged(root?.style, "--dream-wallpaper-cover",
+       `${Math.round((1 - numeric) * 100)}%`);
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+     return numeric;
+   };
+ 
++  const postScene = (data) => {
++    if (sceneFrame?.contentWindow) sceneFrame.contentWindow.postMessage(data, sceneOrigin);
++  };
++  const failScene = (message) => {
++    if (!sceneFrame) return;
++    if (sceneTimer) clearTimeout(sceneTimer);
++    sceneTimer = null;
++    sceneReady = false;
++    sceneStats.status = "error";
++    sceneStats.error = String(message || "场景加载失败").slice(0, 240);
++    sceneFrame.style.setProperty("visibility", "hidden");
++    sceneFrame.removeAttribute("data-dream-scene-ready");
++    postScene({ type: "gpt-wallpaper:pause", paused: true });
++    applyRootState(document.documentElement);
++    refreshPredicates();
++  };
++  const sceneMessageHandler = (event) => {
++    if (!sceneFrame || event.source !== sceneFrame.contentWindow || event.origin !== sceneOrigin) return;
++    if (event.data?.type === "gpt-wallpaper:ready") {
++      if (sceneStats.status === "error") return;
++      if (sceneTimer) clearTimeout(sceneTimer);
++      sceneTimer = null;
++      sceneReady = true;
++      sceneStats.status = "ready";
++      sceneFrame.style.setProperty("visibility", "visible");
++      sceneFrame.setAttribute("data-dream-scene-ready", "true");
++      const fallback = document.getElementById(MEDIA_ID);
++      fallback?.pause?.();
++      fallback?.remove();
++      applyRootState(document.documentElement);
++      refreshPredicates();
++    } else if (event.data?.type === "gpt-wallpaper:error") failScene(event.data.message);
++  };
++  const sceneBlockedHandler = (event) => {
++    if (sceneLiveUrl && (event.blockedURI === sceneOrigin || event.blockedURI === sceneLiveUrl) &&
++        /^(frame-src|child-src|default-src)$/.test(event.effectiveDirective || "")) {
++      failScene("Codex 内容安全策略阻止本地场景嵌入；保留预览图");
++    }
++  };
++  const sendScenePointer = (event, buttons) => {
++    if (!sceneReady || document.hidden || videoConfig.wallpaperReveal <= 0) return;
++    const u = Number(event.clientX) / (window.innerWidth || 1);
++    const v = Number(event.clientY) / (window.innerHeight || 1);
++    if (!Number.isFinite(u) || !Number.isFinite(v)) return;
++    postScene({ type: "gpt-wallpaper:pointer", u: Math.max(0, Math.min(1, u)),
++      v: Math.max(0, Math.min(1, v)), buttons: buttons & 1,
++      mods: { shift: Boolean(event.shiftKey), ctrl: Boolean(event.ctrlKey),
++        alt: Boolean(event.altKey), meta: Boolean(event.metaKey) } });
++  };
++  const sceneMoveHandler = (event) => sendScenePointer(event, event.buttons || 0);
++  const sceneDownHandler = (event) => {
++    if (event.button !== 0) return;
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = null;
++    sceneDownAt = Date.now();
++    sendScenePointer(event, 1);
++  };
++  const sceneUpHandler = (event) => {
++    if (event.button !== 0) return;
++    const delay = Math.max(0, 20 - (Date.now() - sceneDownAt));
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    scenePointerTimer = setTimeout(() => { scenePointerTimer = null; sendScenePointer(event, 0); }, delay);
++  };
++  const sceneLeaveHandler = () => postScene({ type: "gpt-wallpaper:leave" });
++  const syncSceneElement = () => {
++    if (!sceneLiveUrl || window[DISABLED_KEY] || !document.body || !shellElementPresent()) return;
++    if (!sceneFrame) {
++      sceneFrame = document.createElement("iframe");
++      sceneFrame.id = SCENE_ID;
++      sceneFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
++      sceneFrame.setAttribute("aria-hidden", "true");
++      sceneFrame.setAttribute("tabindex", "-1");
++      sceneFrame.setAttribute("referrerpolicy", "no-referrer");
++      sceneFrame.style.setProperty("visibility", "hidden");
++      sceneFrame.src = sceneLiveUrl;
++      document.body.appendChild(sceneFrame);
++      sceneStats.status = "loading";
++      sceneTimer = setTimeout(() => {
++        sceneTimer = null;
++        if (!sceneReady) failScene("场景未返回可用画面，可能被内容安全策略阻止；保留预览图");
++      }, 90000);
++    }
++    postScene({ type: "gpt-wallpaper:pause", paused: document.hidden || videoConfig.wallpaperReveal <= 0 || sceneStats.status === "error" });
++  };
++
+   // Poster transport (remote desktop sessions): decode exactly one frame out
+   // of the transferred video, paint it as static CSS art, then drop the video
+   // element and revoke the blob so nothing keeps decoding or compositing.
+@@ -861,6 +962,7 @@
+     // the media element on a cleaned-up or replaced install.
+     if (window[DISABLED_KEY] || window[STATE_KEY]?.installToken !== installToken) return null;
+     let media = document.getElementById(MEDIA_ID);
++    if (sceneReady) { media?.pause?.(); media?.remove(); return null; }
+     if (videoConfig.mediaType !== "video" || !shellElementPresent()) {
+       media?.remove();
+       return null;
+@@ -1428,6 +1530,12 @@
+     if (state?.visibilityHandler) {
+       document.removeEventListener?.("visibilitychange", state.visibilityHandler);
+     }
++    if (sceneTimer) clearTimeout(sceneTimer);
++    if (scenePointerTimer) clearTimeout(scenePointerTimer);
++    for (const [type, handler] of sceneListeners) window.removeEventListener?.(type, handler, true);
++    document.removeEventListener?.("securitypolicyviolation", sceneBlockedHandler);
++    sceneFrame?.remove();
++    sceneFrame = null;
+     stopStream();
+     if (mediaUrl) URL.revokeObjectURL(mediaUrl);
+     mediaUrl = null;
+@@ -1525,6 +1633,7 @@
+     },
+     mediaUrl: null,
+     streamStats: null,
++    sceneStats,
+     beginMedia,
+     appendMedia,
+     commitMedia,
+@@ -1532,6 +1641,12 @@
+     stopStream,
+     detectShellAppearance,
+   };
++  const sceneListeners = sceneLiveUrl ? [
++    ["message", sceneMessageHandler], ["mousemove", sceneMoveHandler],
++    ["mousedown", sceneDownHandler], ["mouseup", sceneUpHandler], ["blur", sceneLeaveHandler],
++  ] : [];
++  for (const [type, handler] of sceneListeners) window.addEventListener?.(type, handler, { capture: true, passive: true });
++  if (sceneLiveUrl) document.addEventListener?.("securitypolicyviolation", sceneBlockedHandler);
+   const firstEnsureStartedAt = now();
+   ensure({ root: true, parts: true });
+   const initialScope = refreshScope();
+@@ -1578,6 +1693,7 @@
+   window[STATE_KEY].timer = timer;
+   const visibilityHandler = () => {
+     syncMediaElement();
++    syncSceneElement();
+     syncStreamState();
+   };
+   if (typeof document.addEventListener === "function") {
+diff --git a/windows/scripts/common-windows.ps1 b/windows/scripts/common-windows.ps1
+index d66bc51..7f4b5ad 100644
+--- a/windows/scripts/common-windows.ps1
++++ b/windows/scripts/common-windows.ps1
+@@ -1043,7 +1043,10 @@ function Start-DreamSkinCodexForDebugging {
+   }
+   $packageProcessId = Start-DreamSkinCodex -Codex $Codex -Arguments $Arguments
+   $packageStatus = Wait-DreamSkinCodexDebugArgumentStatus -Codex $Codex -Port $Port
+-  if ($packageStatus -ne 'protocol-redirected') {
++  # A readable command line proving the switches were dropped is just as
++  # definitive as codex:// redirection. Unknown/uninspectable state still
++  # stays on the conservative activation path and is never force-replaced.
++  if ($packageStatus -notin @('protocol-redirected', 'not-forwarded')) {
+     return [pscustomobject]@{
+       ProcessId = $packageProcessId
+       Strategy = 'package-activation'
+@@ -1070,7 +1073,7 @@ function Start-DreamSkinCodexForDebugging {
+       'cdp-launch-failed'
+     }
+     throw (New-DreamSkinStartException -Category $category `
+-      -Message "Codex $($Codex.Version) converted the CDP argument into a codex:// navigation path. Direct launch of the validated Store executable failed ($failureKind), so this Codex/Windows combination cannot expose the Dream Skin debugging endpoint without modifying the protected app package." `
++      -Message "Codex $($Codex.Version) did not preserve the CDP switches during package activation ($packageStatus). Direct launch of the validated Store executable failed ($failureKind), so this Codex/Windows combination cannot expose the Dream Skin debugging endpoint without modifying the protected app package." `
+       -InnerException $_.Exception)
+   }
+ 
+diff --git a/windows/scripts/injector.mjs b/windows/scripts/injector.mjs
+index 3a159c5..1d4ff66 100644
+--- a/windows/scripts/injector.mjs
++++ b/windows/scripts/injector.mjs
+@@ -322,6 +322,7 @@ class CdpSession {
+     this.nextId = 1;
+     this.pending = new Map();
+     this.listeners = new Map();
++    this.executionContexts = new Map();
+     this.closed = false;
+   }
+ 
+@@ -338,6 +339,8 @@ class CdpSession {
+     this.ws.addEventListener("error", () => this.close());
+     this.ws.addEventListener("close", () => {
+       this.closed = true;
++      void this.dreamSkinDshBinding?.dispose().catch(() => {});
++      void this.dreamSkinDshProxy?.dispose().catch(() => {});
+       for (const waiter of this.pending.values()) {
+         clearTimeout(waiter.timeout);
+         waiter.reject(new Error("CDP socket closed"));
+@@ -370,6 +373,11 @@ class CdpSession {
+       } else waiter.resolve(message.result);
+       return;
+     }
++    if (message.method === "Runtime.executionContextCreated" && message.params?.context) {
++      this.executionContexts.set(message.params.context.id, message.params.context);
++    } else if (message.method === "Runtime.executionContextDestroyed") {
++      this.executionContexts.delete(message.params?.executionContextId);
++    } else if (message.method === "Runtime.executionContextsCleared") this.executionContexts.clear();
+     for (const listener of this.listeners.get(message.method) ?? []) listener(message.params ?? {});
+   }
+ 
+@@ -379,6 +387,12 @@ class CdpSession {
+     this.listeners.set(method, listeners);
+   }
+ 
++  off(method, listener) {
++    const listeners = (this.listeners.get(method) ?? []).filter((item) => item !== listener);
++    if (listeners.length) this.listeners.set(method, listeners);
++    else this.listeners.delete(method);
++  }
++
+   send(method, params = {}) {
+     if (this.closed) return Promise.reject(new Error("CDP session is closed"));
+     return new Promise((resolve, reject) => {
+@@ -413,6 +427,8 @@ class CdpSession {
+   }
+ 
+   close() {
++    void this.dreamSkinDshBinding?.dispose().catch(() => {});
++    void this.dreamSkinDshProxy?.dispose().catch(() => {});
+     for (const waiter of this.pending.values()) {
+       clearTimeout(waiter.timeout);
+       waiter.reject(new Error("CDP session closed"));
+@@ -709,7 +725,661 @@ async function loadSafeCss(themeRoot) {
+   }
+ }
+ 
++// Local addon state is separate from imported theme packages and Safe CSS.
++// Nothing supplied by a theme ZIP can turn this transport on. Keep this small
++// reader inline so existing self-contained manager payload maps remain valid.
++export function normalizeSceneAddon(value) {
++  if (!value || typeof value !== "object" || Array.isArray(value) ||
++      Object.keys(value).some((key) => !["enabled", "url", "name"].includes(key)) ||
++      typeof value.enabled !== "boolean") throw new Error("Invalid scene addon state");
++  if (value.name !== undefined && (typeof value.name !== "string" || value.name.length > 240 || /[\r\n\0]/.test(value.name))) {
++    throw new Error("Invalid scene addon name");
++  }
++  if (!value.enabled) return null;
++  if (typeof value.url !== "string" || value.url.length > 240) throw new Error("Invalid scene addon URL");
++  const url = new URL(value.url);
++  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" ||
++      !/^\d+$/.test(url.port) || Number(url.port) < 1024 || Number(url.port) > 65535 ||
++      url.username || url.password || url.search || url.hash ||
++      !/^\/s\/[a-f0-9]{64}\/scene\/[a-f0-9]{24}$/.test(url.pathname) ||
++      url.href !== value.url) throw new Error("Invalid scene addon URL");
++  return url.href;
++}
++
++export async function readSceneAddon(localRoot = process.env.LOCALAPPDATA) {
++  if (!localRoot) return { url: null, stamp: "none" };
++  const file = path.resolve(localRoot, "GPTWallpaper", "scene.json");
++  try {
++    const stat = await fs.lstat(file);
++    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 8192 ||
++        (await fs.realpath(file)).toLowerCase() !== file.toLowerCase()) {
++      return { url: null, stamp: "invalid" };
++    }
++    const handle = await fs.open(file, "r");
++    let bytes;
++    try {
++      const buffer = Buffer.alloc(8193);
++      const result = await handle.read(buffer, 0, buffer.length, 0);
++      if (result.bytesRead > 8192) return { url: null, stamp: "invalid" };
++      bytes = buffer.subarray(0, result.bytesRead);
++    } finally { await handle.close(); }
++    const stamp = createHash("sha256").update(bytes).digest("hex");
++    try { return { url: normalizeSceneAddon(JSON.parse(bytes.toString("utf8"))), stamp }; }
++    catch { return { url: null, stamp }; }
++  } catch (error) {
++    return { url: null, stamp: error.code === "ENOENT" ? "none" : "unreadable" };
++  }
++}
++
++const DSH_SCRIPT_MAX_BYTES = 10 * 1024 * 1024;
++const DSH_PROXY_BODY_MAX_BYTES = 1024 * 1024;
++const DSH_PROXY_ASSET_MAX_BYTES = 32 * 1024 * 1024;
++const DSH_PROXY_PACKAGE_MAX_BYTES = 512 * 1024 * 1024;
++const DSH_PROXY_VIDEO_MAX_BYTES = 4 * 1024 * 1024;
++const DSH_PROXY_METHODS = new Set(["GET", "HEAD", "OPTIONS", "POST", "PATCH", "PUT", "DELETE"]);
++const DSH_REQUEST_HEADERS = new Set(["accept", "content-type", "range", "if-range", "if-none-match", "if-modified-since", "cache-control", "x-dsh-desktop-renderer"]);
++const DSH_RESPONSE_HEADERS = new Set(["content-type", "content-range", "accept-ranges", "cache-control", "etag", "last-modified", "expires", "content-language", "content-security-policy", "x-frame-options"]);
++const DSH_OPAQUE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
++const DSH_OPAQUE_HEADERS = new Set(["range", "content-type"]);
++
++export function normalizeDshNativeConfig(value) {
++  if (!value || typeof value !== "object" || Array.isArray(value) ||
++      ![Object.prototype, null].includes(Object.getPrototypeOf(value)) ||
++      !Object.prototype.hasOwnProperty.call(value, "enabled") ||
++      Object.keys(value).some((key) => !["enabled", "origin", "token", "scriptHash"].includes(key)) ||
++      typeof value.enabled !== "boolean") throw new Error("Invalid native DSH configuration");
++  if (!value.enabled) return null;
++  if (typeof value.origin !== "string" || !/^http:\/\/127\.0\.0\.1:[0-9]{4,5}$/.test(value.origin)) {
++    throw new Error("Native DSH requires an exact loopback HTTP origin");
++  }
++  const origin = new URL(value.origin);
++  if (origin.origin !== value.origin || Number(origin.port) < 1024 || Number(origin.port) > 65535 ||
++      typeof value.token !== "string" || !/^[a-f0-9]{64}$/.test(value.token) ||
++      typeof value.scriptHash !== "string" || !/^[a-f0-9]{64}$/.test(value.scriptHash)) {
++    throw new Error("Invalid native DSH token, script hash or port");
++  }
++  return {enabled: true, origin: value.origin, token: value.token, scriptHash: value.scriptHash};
++}
++
++async function readBoundedLocalAddon(file, limit) {
++  const before = await fs.lstat(file);
++  if (!before.isFile() || before.isSymbolicLink() || before.size < 1 || before.size > limit ||
++      (await fs.realpath(file)).toLowerCase() !== file.toLowerCase()) throw new Error("Invalid local addon file");
++  const handle = await fs.open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
++  try {
++    const bytes = Buffer.alloc(before.size + 1);
++    const result = await handle.read(bytes, 0, bytes.length, 0);
++    const after = await handle.stat();
++    if (!sameFileStat(before, after) || result.bytesRead !== before.size) throw new Error("Local addon changed during read");
++    return bytes.subarray(0, result.bytesRead);
++  } finally { await handle.close(); }
++}
++
++export async function readDshNativeAddon(localRoot = process.env.LOCALAPPDATA) {
++  if (!localRoot) return {config: null, source: null, stamp: "none"};
++  try {
++    const stateRoot = path.resolve(localRoot, "GPTWallpaper");
++    const bytes = await readBoundedLocalAddon(path.join(stateRoot, "dsh-native.json"), 8192);
++    const configHash = createHash("sha256").update(bytes).digest("hex");
++    let config;
++    try { config = normalizeDshNativeConfig(JSON.parse(bytes.toString("utf8"))); }
++    catch { return {config: null, source: null, stamp: configHash}; }
++    if (!config) return {config: null, source: null, stamp: configHash};
++    const script = await readBoundedLocalAddon(path.join(stateRoot, "native-client.js"), DSH_SCRIPT_MAX_BYTES);
++    const digest = createHash("sha256").update(script).digest("hex");
++    const stamp = createHash("sha256").update(configHash).update("\0").update(digest).digest("hex");
++    if (digest !== config.scriptHash) return {config: null, source: null, stamp};
++    const source = script.toString("utf8");
++    if (!Buffer.from(source, "utf8").equals(script)) return {config: null, source: null, stamp};
++    // Parse only. The approved local factory is evaluated solely in a verified
++    // Codex renderer after the app-origin proxy has been installed.
++    new Function(`return (${source});`);
++    return {config, source, stamp};
++  } catch (error) {
++    return {config: null, source: null, stamp: error.code === "ENOENT" ? "none" : "invalid"};
++  }
++}
++
++export function dshNativeOrigin(targetUrl) {
++  const url = new URL(targetUrl);
++  if (url.protocol !== "app:" || !/^[A-Za-z0-9._-]+$/.test(url.hostname) || url.port || url.username || url.password) {
++    throw new Error("Native DSH requires the verified app renderer origin");
++  }
++  // URL.origin is "null" for this custom scheme in Node. Never pass that as
++  // the native origin or accidentally accept an arbitrary opaque origin.
++  return `app://${url.host}`;
++}
++
++export function mapDshProxyUrl(requestUrl, nativeOrigin, config) {
++  if (dshNativeOrigin(nativeOrigin) !== nativeOrigin) throw new Error("Invalid native wallpaper origin");
++  const native = new URL(nativeOrigin);
++  const requested = new URL(requestUrl);
++  const prefix = `/dsh/${config.token}/`;
++  if (requested.protocol !== "app:" || requested.host !== native.host || requested.username || requested.password ||
++      !requested.pathname.startsWith(prefix)) return null;
++  if (requested.href.length > 16384 || /[\\\u0000-\u001f\u007f]/.test(requested.pathname)) throw new Error("Invalid wallpaper resource path");
++  for (const segment of requested.pathname.slice(prefix.length).split("/")) {
++    const decoded = decodeURIComponent(segment);
++    if ([".", ".."].includes(decoded) || /[\\/\u0000-\u001f\u007f]/.test(decoded)) throw new Error("Invalid wallpaper resource path");
++  }
++  return `${config.origin}${requested.pathname}${requested.search}`;
++}
++
++function dshRequestAccess(request, nativeOrigin, config) {
++  const supplied = (name) => Object.entries(request.headers ?? {}).filter(([key]) => key.toLowerCase() === name).map(([, value]) => value);
++  const origins = supplied("origin");
++  if (origins.length > 1 || (origins.length && typeof origins[0] !== "string")) return null;
++  const origin = origins[0];
++  const resourcePrefix = `/dsh/${config.token}/wallpaper-engine/scene-files/`;
++  const pathname = new URL(request.url).pathname;
++  // The first segment is the upstream mediaMap's base64url project token;
++  // registration and filesystem fencing remain the original host's job.
++  const sceneResource = pathname.startsWith(resourcePrefix) && /^[A-Za-z0-9_-]+\/.+/.test(pathname.slice(resourcePrefix.length));
++  if (origin === undefined || origin === nativeOrigin) return {origin: config.origin, opaque: false, sceneResource};
++  // A strict Web wallpaper must retain its opaque identity. Never turn its
++  // Origin:null into the trusted loopback origin for settings or control APIs.
++  if (origin !== "null" || !sceneResource || !DSH_OPAQUE_METHODS.has(request.method)) return null;
++  const requestedMethods = supplied("access-control-request-method");
++  const requestedHeaders = supplied("access-control-request-headers");
++  if (requestedMethods.length > 1 || requestedHeaders.length > 1) return null;
++  if (requestedMethods.length && (request.method !== "OPTIONS" || !DSH_OPAQUE_METHODS.has(requestedMethods[0]))) return null;
++  if (requestedHeaders.length) {
++    const value = requestedHeaders[0];
++    if (request.method !== "OPTIONS" || typeof value !== "string" || value.length > 512 || !value.trim() ||
++        !value.split(",").every(name => DSH_OPAQUE_HEADERS.has(name.trim().toLowerCase()))) return null;
++  }
++  return {origin: "null", opaque: true, sceneResource: true};
++}
++
++function dshOpaqueResponseHeaders(access) {
++  if (!access?.opaque) return access?.sceneResource ? [{name: "Vary", value: "Origin"}] : [];
++  // Synthesize a finite policy only after the request passes the sandbox gate.
++  // Upstream wildcard/credential policies are deliberately never forwarded.
++  return [
++    {name: "Access-Control-Allow-Origin", value: "null"},
++    {name: "Access-Control-Allow-Methods", value: "GET, HEAD, OPTIONS"},
++    {name: "Access-Control-Allow-Headers", value: "Range, Content-Type"},
++    {name: "Access-Control-Expose-Headers", value: "Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified"},
++    {name: "Access-Control-Max-Age", value: "600"},
++    {name: "Vary", value: "Origin"},
++  ];
++}
++
++function dshProxyRoute(requestUrl, config) {
++  try {
++    const relative = new URL(requestUrl).pathname.slice(`/dsh/${config.token}/`.length);
++    if (relative.startsWith("wallpaper-engine/scene-files/")) {
++      const extension = /\.(pkg|html?|m?js|css|json|png|jpe?g|webp|mp4|webm|woff2?|ttf)$/i.exec(relative)?.[1]?.toLowerCase();
++      return `project-resource${extension ? `:${extension}` : ""}`;
++    }
++    if (/^client\/[0-9]+\.js$/.test(relative)) return "client-bundle";
++    const root = relative.replace(/^wallpaper-engine\//, "").split("/")[0];
++    return new Set(["metadata", "settings", "inventory", "client-diag", "fontsets", "glass-presets", "pet-link", "scene-live", "media-status", "audio-spectrum", "now-playing", "media-control", "media", "codex-upload", "upload", "avatar", "mascot", "custom-frame"]).has(root) ? root : "other";
++  } catch { return "invalid"; }
++}
++
++function dshProxyError(error, config) {
++  const code = error?.cdpCode ?? error?.code ?? error?.cause?.code;
++  const message = String(error?.message || error || "Unknown proxy error").replaceAll(config.token, "[token]")
++    .replace(/(?:https?|app):\/\/[^\s"'<>]+/gi, "[url]")
++    .replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\r\n"'<>]+/g, "[path]")
++    .replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 240);
++  return {name: String(error?.name || "Error").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40),
++    code: typeof code === "number" ? code : typeof code === "string" && /^[A-Za-z0-9_-]{1,60}$/.test(code) ? code : null,
++    message};
++}
++
++export function dshRequestBodyLimit(requestUrl, method, config) {
++  if (method !== "POST") return DSH_PROXY_BODY_MAX_BYTES;
++  const prefix = `/dsh/${config.token}/wallpaper-engine/`;
++  const pathname = new URL(requestUrl).pathname;
++  if (!pathname.startsWith(prefix)) return DSH_PROXY_BODY_MAX_BYTES;
++  const route = pathname.slice(prefix.length);
++  // These are the original DSH host's asset limits, not general control-plane
++  // allowances. Its own streaming readers still enforce MIME/magic/schema.
++  if (route === "upload") return 512 * 1024 * 1024;
++  if (route === "mascot" || /^avatar\/[A-Za-z-]{1,32}$/.test(route)) return 8 * 1024 * 1024;
++  if (/^custom-frame(?:\/[A-Za-z0-9._-]{1,200})?$/.test(route)) return 30 * 1024 * 1024;
++  if (route === "glass-presets/import") return 128 * 1024 + 3 * Math.ceil((8 * 1024 * 1024) / 3) * 4;
++  return DSH_PROXY_BODY_MAX_BYTES;
++}
++
++export function isDshPackageResource(requestUrl, config) {
++  const pathname = new URL(requestUrl).pathname;
++  const prefix = `/dsh/${config.token}/wallpaper-engine/scene-files/`;
++  if (pathname.startsWith(prefix)) {
++    const token = pathname.slice(prefix.length);
++    // Some upstream inventory entries address the package itself by the
++    // canonical base64url token for its full path, without a /scene.pkg suffix.
++    // Decode only for transfer classification; never resolve/open this path.
++    if (token && !token.includes("/")) {
++      if (token.length > 8192 || !/^[A-Za-z0-9_-]+$/.test(token)) throw new Error("Invalid wallpaper project resource token");
++      const bytes = Buffer.from(token, "base64url");
++      const decoded = bytes.toString("utf8");
++      if (bytes.toString("base64url") !== token || !Buffer.from(decoded, "utf8").equals(bytes) || /[\u0000-\u001f\u007f]/.test(decoded)) {
++        throw new Error("Noncanonical wallpaper project resource token");
++      }
++      return /\.pkg$/i.test(decoded);
++    }
++  }
++  return /\.pkg$/i.test(pathname);
++}
++
++function dshPostBody(request, limit) {
++  const unavailable = () => Object.assign(new Error("Chromium omitted the binary upload bytes; native chunk upload is required"), {code: "DSH_BODY_UNAVAILABLE"});
++  let body;
++  if (Array.isArray(request.postDataEntries) && request.postDataEntries.length) {
++    if (request.postDataEntries.length > 128) throw new Error("Wallpaper request has too many body entries");
++    const chunks = [];
++    let size = 0;
++    for (const entry of request.postDataEntries) {
++      if (typeof entry?.bytes !== "string") throw unavailable();
++      const padding = entry.bytes.indexOf("=");
++      if (entry.bytes.length > Math.ceil(limit / 3) * 4 || entry.bytes.length % 4 !== 0 ||
++          /[^A-Za-z0-9+/=]/.test(entry.bytes) ||
++          (padding >= 0 && (padding < entry.bytes.length - 2 || /[^=]/.test(entry.bytes.slice(padding))))) {
++        throw new Error("Invalid wallpaper request body");
++      }
++      const bytes = Buffer.from(entry.bytes, "base64");
++      size += bytes.length;
++      if (size > limit) throw new Error("Wallpaper request body exceeds its route limit");
++      chunks.push(bytes);
++    }
++    body = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, size);
++  } else if (typeof request.postData === "string") {
++    const type = Object.entries(request.headers ?? {}).find(([name]) => name.toLowerCase() === "content-type")?.[1] ?? "";
++    if (request.postData && !/^(?:application\/(?:json|[a-z0-9.+-]+\+json|x-www-form-urlencoded)|text\/[a-z0-9.+-]+)(?:;|$)/i.test(type)) throw unavailable();
++    body = Buffer.from(request.postData, "utf8");
++  } else if (request.hasPostData) throw unavailable();
++  if (body?.length > limit) throw new Error("Wallpaper request body exceeds its route limit");
++  return body;
++}
++
++function boundedVideoRange(range) {
++  if (!range) return `bytes=0-${DSH_PROXY_VIDEO_MAX_BYTES - 1}`;
++  let match = /^bytes=(\d+)-(\d*)$/.exec(range);
++  if (match) {
++    const start = Number(match[1]);
++    const last = match[2] ? Number(match[2]) : start + DSH_PROXY_VIDEO_MAX_BYTES - 1;
++    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(last) || last < start) throw new Error("Invalid wallpaper media range");
++    return `bytes=${start}-${Math.min(last, start + DSH_PROXY_VIDEO_MAX_BYTES - 1)}`;
++  }
++  match = /^bytes=-(\d+)$/.exec(range);
++  if (match && Number.isSafeInteger(Number(match[1])) && Number(match[1]) > 0) {
++    return `bytes=-${Math.min(Number(match[1]), DSH_PROXY_VIDEO_MAX_BYTES)}`;
++  }
++  throw new Error("Invalid wallpaper media range");
++}
++
++async function dshResponseBytes(response, limit) {
++  const declared = Number(response.headers.get("content-length"));
++  if (Number.isFinite(declared) && declared > limit) {
++    await response.body?.cancel?.().catch(() => {});
++    throw new Error("Wallpaper resource exceeds its response limit");
++  }
++  const chunks = [];
++  let size = 0;
++  for await (const chunk of response.body ?? []) {
++    size += chunk.byteLength;
++    if (size > limit) {
++      await response.body?.cancel?.().catch(() => {});
++      throw new Error("Wallpaper resource exceeds its response limit");
++    }
++    chunks.push(Buffer.from(chunk));
++  }
++  return Buffer.concat(chunks, size);
++}
++
++export async function installDshProxy(session, value, {fetchImpl = fetch, onDiagnostic = (entry) => console.error(`[dream-skin] dsh-proxy ${JSON.stringify(entry)}`)} = {}) {
++  const config = normalizeDshNativeConfig(value);
++  if (!config) throw new Error("Cannot install a disabled wallpaper proxy");
++  const nativeOrigin = dshNativeOrigin(session.target.url);
++  const signature = `${nativeOrigin}\0${config.origin}\0${config.token}`;
++  if (session.dreamSkinDshProxy?.signature === signature) return session.dreamSkinDshProxy;
++  await session.dreamSkinDshProxy?.dispose();
++  let stopped = false;
++  let packageActive = 0;
++  let smallActive = 0;
++  const waiting = [];
++  const controllers = new Set();
++  const virtualResponses = new Map();
++  let virtualSequence = 0;
++  const diagnostics = [];
++  let emittedDiagnostics = 0;
++  let emittedErrors = 0;
++  const record = (entry) => {
++    const bounded = {at: new Date().toISOString(), ...entry};
++    diagnostics.push(bounded);
++    if (diagnostics.length > 128) diagnostics.shift();
++    // Keep startup evidence finite even when media polls at 20Hz for hours.
++    const isError = entry.stage === "error";
++    if (isError ? emittedErrors < 32 : emittedDiagnostics < 96) {
++      if (isError) emittedErrors++; else emittedDiagnostics++;
++      try { onDiagnostic?.(bounded); } catch {}
++    }
++  };
++  const acquire = async (large) => {
++    while (!stopped && (large ? packageActive >= 1 : smallActive >= 8)) {
++      if (waiting.length >= 128) throw new Error("Wallpaper resource queue is full");
++      await new Promise((resolve, reject) => {
++        const wake = () => { clearTimeout(timer); resolve(); };
++        const timer = setTimeout(() => {
++          const index = waiting.indexOf(wake);
++          if (index >= 0) waiting.splice(index, 1);
++          reject(new Error("Wallpaper resource queue timed out"));
++        }, 30000);
++        waiting.push(wake);
++      });
++    }
++    if (stopped) throw new Error("Wallpaper proxy stopped");
++    if (large) packageActive += 1; else smallActive += 1;
++    return () => {
++      if (large) packageActive -= 1; else smallActive -= 1;
++      for (const resolve of waiting.splice(0)) resolve();
++    };
++  };
++  const fulfill = (requestId, responseCode, bytes, responseHeaders = []) => virtualResponses.has(requestId)
++    ? virtualResponses.get(requestId)(responseCode, bytes, responseHeaders)
++    : session.send("Fetch.fulfillRequest", {requestId, responseCode, responseHeaders, body: bytes.toString("base64")});
++  const handlePaused = async (event) => {
++    let release = null;
++    let timer = null;
++    let controller = null;
++    let accessHeaders = [];
++    let stage = "mapping";
++    let upstreamStatus = null;
++    let bodyBytes = null;
++    const context = {route: dshProxyRoute(event.request?.url, config), method: typeof event.request?.method === "string" && /^[A-Z]{1,16}$/.test(event.request.method) ? event.request.method : "invalid",
++      requestId: String(event.requestId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 100),
++      networkId: String(event.networkId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 100),
++      frameId: String(event.frameId || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 100)};
++    const respond = async (code, bytes, headers = []) => {
++      stage = "fulfill";
++      bodyBytes = bytes.length;
++      const responseHeaders = [...headers, ...accessHeaders];
++      record({...context, stage, status: code, bodyBytes, headers: responseHeaders.map(header => header.name.toLowerCase()).slice(0, 32)});
++      const result = await fulfill(event.requestId, code, bytes, responseHeaders);
++      record({...context, stage: "fulfilled", status: code, bodyBytes});
++      return result;
++    };
++    try {
++      if (stopped) return;
++      const request = event.request ?? {};
++      const upstreamUrl = mapDshProxyUrl(request.url, nativeOrigin, config);
++      if (!upstreamUrl) return await session.send("Fetch.continueRequest", {requestId: event.requestId}).catch(() => {});
++      const origins = Object.entries(request.headers ?? {}).filter(([name]) => name.toLowerCase() === "origin").map(([, value]) => value);
++      record({...context, stage: "request", origin: origins.length === 0 ? "absent" : origins.length > 1 ? "ambiguous" : origins[0] === nativeOrigin ? "native" : origins[0] === "null" ? "opaque" : "foreign"});
++      stage = "origin";
++      const access = dshRequestAccess(request, nativeOrigin, config);
++      if (!access) return await respond(403, Buffer.from("Wallpaper request origin is not allowed"));
++      accessHeaders = dshOpaqueResponseHeaders(access);
++      if (!DSH_PROXY_METHODS.has(request.method)) return await respond(405, Buffer.from("Wallpaper method is not allowed"));
++      stage = "request-body";
++      const bodyLimit = dshRequestBodyLimit(request.url, request.method, config);
++      let body;
++      try { body = dshPostBody(request, bodyLimit); }
++      catch (error) {
++        const unavailable = error.code === "DSH_BODY_UNAVAILABLE";
++        return await respond(unavailable ? 422 : 413, Buffer.from(JSON.stringify({
++          error: unavailable ? "native-upload-bytes-unavailable" : "wallpaper-request-too-large",
++          message: unavailable ? "Chromium omitted binary upload bytes; use the native chunk upload adapter" : "Wallpaper request exceeds its endpoint limit",
++        })), [{name: "Content-Type", value: "application/json; charset=utf-8"}]);
++      }
++      if (["GET", "HEAD", "OPTIONS"].includes(request.method) && body?.length) return await respond(400, Buffer.from("Unexpected wallpaper request body"));
++      stage = "request-headers";
++      const headers = {Origin: access.origin};
++      for (const [name, raw] of Object.entries(request.headers ?? {})) {
++        const lower = name.toLowerCase();
++        const opaquePreflight = access.opaque && request.method === "OPTIONS" && ["access-control-request-method", "access-control-request-headers"].includes(lower);
++        if ((!DSH_REQUEST_HEADERS.has(lower) && !opaquePreflight) || (access.opaque && lower === "x-dsh-desktop-renderer")) continue;
++        const value = String(raw);
++        if (value.length > 8192 || /[\r\n\0]/.test(value)) throw new Error("Invalid wallpaper request header");
++        headers[lower] = value;
++      }
++      const pathname = new URL(upstreamUrl).pathname;
++      const isPackage = isDshPackageResource(request.url, config);
++      const isVideo = /\.(mp4|webm|m4v|mov)$/i.test(pathname) || /\/(?:media|scene-video)\//.test(pathname);
++      if (request.method === "GET" && isVideo) headers.range = boundedVideoRange(headers.range);
++      stage = "queue";
++      release = await acquire(isPackage || bodyLimit > DSH_PROXY_ASSET_MAX_BYTES);
++      controller = new AbortController();
++      if (event.abortSignal?.aborted) controller.abort();
++      event.abortSignal?.addEventListener("abort", () => controller?.abort(), {once: true});
++      controllers.add(controller);
++      timer = setTimeout(() => controller.abort(), 30000);
++      stage = "upstream-fetch";
++      const response = await fetchImpl(upstreamUrl, {
++        method: request.method, headers, body,
++        redirect: "error", signal: controller.signal,
++      });
++      upstreamStatus = response.status;
++      if (response.status < 200 || response.status > 599) throw new Error("Unsupported wallpaper response status");
++      const contentType = response.headers.get("content-type") ?? "";
++      const declared = response.headers.get("content-length");
++      record({...context, stage: "upstream-response", status: response.status, contentType: contentType.replace(/[^\x20-\x7e]/g, "").slice(0, 120),
++        declaredBytes: declared !== null && /^\d{1,16}$/.test(declared) && Number.isSafeInteger(Number(declared)) ? Number(declared) : null});
++      const limit = isPackage ? DSH_PROXY_PACKAGE_MAX_BYTES
++        : isVideo || /^video\//i.test(contentType) ? DSH_PROXY_VIDEO_MAX_BYTES : DSH_PROXY_ASSET_MAX_BYTES;
++      stage = "response-body";
++      let bytes = request.method === "HEAD" || [204, 304].includes(response.status)
++        ? Buffer.alloc(0) : await dshResponseBytes(response, limit);
++      bodyBytes = bytes.length;
++      stage = "response-rewrite";
++      let rewritten = false;
++      if (/^(?:text\/(?:html|css|javascript)|application\/(?:json|javascript|x-javascript))(?:;|$)/i.test(contentType)) {
++        const text = bytes.toString("utf8");
++        const upstreamBase = `${config.origin}/dsh/${config.token}`;
++        const nativeBase = `${nativeOrigin}/dsh/${config.token}`;
++        if (text.includes(upstreamBase) && Buffer.from(text, "utf8").equals(bytes)) {
++          if (response.status === 206) throw new Error("Ranged wallpaper text cannot be rewritten safely");
++          bytes = Buffer.from(text.split(upstreamBase).join(nativeBase), "utf8");
++          if (bytes.length > limit) throw new Error("Rewritten wallpaper resource exceeds its response limit");
++          rewritten = true;
++        }
++      }
++      const responseHeaders = [];
++      for (const [name, value] of response.headers) {
++        const lower = name.toLowerCase();
++        if (DSH_RESPONSE_HEADERS.has(lower) && value.length <= 32768 && !/[\r\n\0]/.test(value) &&
++            !(rewritten && ["etag", "cache-control"].includes(lower))) responseHeaders.push({name, value});
++      }
++      if (rewritten) responseHeaders.push({name: "Cache-Control", value: "no-store"});
++      if (request.method === "HEAD") {
++        const length = response.headers.get("content-length") ?? "";
++        if (/^\d{1,16}$/.test(length) && Number.isSafeInteger(Number(length))) responseHeaders.push({name: "Content-Length", value: length});
++      } else if (![204, 304].includes(response.status)) responseHeaders.push({name: "Content-Length", value: String(bytes.length)});
++      if (!stopped && !session.closed) await respond(response.status, bytes, responseHeaders);
++    } catch (error) {
++      record({...context, stage: "error", failedStage: stage, upstreamStatus, bodyBytes, error: dshProxyError(error, config)});
++      if (!stopped && !session.closed) await respond(502, Buffer.from("Local wallpaper resource is unavailable or exceeds its transfer limit"), [
++        {name: "Content-Type", value: "text/plain; charset=utf-8"},
++        {name: "Cache-Control", value: "no-store"},
++      ]).catch(error => record({...context, stage: "error", failedStage: "error-fulfill", upstreamStatus, bodyBytes, error: dshProxyError(error, config)}));
++    } finally {
++      if (timer) clearTimeout(timer);
++      if (controller) controllers.delete(controller);
++      release?.();
++    }
++  };
++  const listener = (event) => { void handlePaused(event); };
++  const proxy = {
++    signature, nativeOrigin, handlePaused, diagnostics: () => diagnostics.map(entry => ({...entry, ...(entry.error ? {error: {...entry.error}} : {}), ...(entry.headers ? {headers: [...entry.headers]} : {})})),
++    async handleVirtual(request, sink, signal) {
++      if (!mapDshProxyUrl(request.url, nativeOrigin, config) || typeof sink !== "function") throw new Error("Invalid bound wallpaper request");
++      const requestId = `native-binding-${++virtualSequence}`;
++      virtualResponses.set(requestId, sink);
++      try { await handlePaused({requestId, request, abortSignal: signal}); }
++      finally { virtualResponses.delete(requestId); }
++    },
++    async dispose() {
++      if (stopped) return;
++      stopped = true;
++      session.off?.("Fetch.requestPaused", listener);
++      for (const controller of controllers) controller.abort();
++      for (const resolve of waiting.splice(0)) resolve();
++      await session.send("Fetch.disable").catch(() => {});
++      if (session.dreamSkinDshProxy === proxy) delete session.dreamSkinDshProxy;
++    },
++  };
++  session.on("Fetch.requestPaused", listener);
++  try {
++    await session.send("Fetch.enable", {patterns: [{urlPattern: `${nativeOrigin}/dsh/${config.token}/*`, requestStage: "Request"}]});
++  } catch (error) {
++    session.off?.("Fetch.requestPaused", listener);
++    stopped = true;
++    throw error;
++  }
++  session.dreamSkinDshProxy = proxy;
++  return proxy;
++}
++
++export const DSH_NATIVE_BINDING = "__GPT_DSH_NATIVE_REQUEST__";
++const DSH_NATIVE_REPLY = "__gpt_dsh_native_reply__";
++const DSH_BINDING_CHUNK = 256 * 1024;
++
++/** Scoped stdio-like renderer transport for Owl builds whose app GET loader
++ * bypasses Fetch interception. It reuses the exact authenticated proxy policy. */
++export async function installDshBinding(session, value, {proxy = null, fetchImpl = fetch, onDiagnostic} = {}) {
++  const config = normalizeDshNativeConfig(value);
++  if (!config) throw new Error("Cannot install a disabled wallpaper binding");
++  const nativeOrigin = dshNativeOrigin(session.target.url);
++  const signature = `${nativeOrigin}\0${config.origin}\0${config.token}`;
++  if (session.dreamSkinDshBinding?.signature === signature) return session.dreamSkinDshBinding;
++  await session.dreamSkinDshBinding?.dispose();
++  const frame = (await session.send("Page.getFrameTree"))?.frameTree?.frame;
++  if (!frame?.id || dshNativeOrigin(frame.url) !== nativeOrigin || frame.parentId) throw new Error("Native wallpaper main frame identity is unavailable");
++  const contexts = session.executionContexts;
++  if (!(contexts instanceof Map) || ![...contexts.values()].some(context => context.origin === nativeOrigin && context.auxData?.isDefault === true && context.auxData?.frameId === frame.id)) {
++    throw new Error("Native wallpaper execution context identity is unavailable");
++  }
++  const transport = proxy ?? await installDshProxy(session, config, {fetchImpl, ...(onDiagnostic ? {onDiagnostic} : {})});
++  const ownsTransport = proxy === null;
++  const active = new Map();
++  const queued = new Set();
++  let running = 0;
++  let stopped = false;
++  let bufferedBytes = 0;
++  const allowedContext = id => {
++    const context = contexts.get(id);
++    return !stopped && context?.origin === nativeOrigin && context.auxData?.isDefault === true && context.auxData?.frameId === frame.id;
++  };
++  const deliver = async (contextId, packet) => {
++    if (!allowedContext(contextId) || session.closed) throw new Error("Native wallpaper context closed");
++    // Both the operation and expression are fixed; renderer strings are JSON
++    // data and never become code or an arbitrary Runtime.evaluate command.
++    const result = await session.send("Runtime.evaluate", {contextId, expression: `globalThis.dispatchEvent(new CustomEvent(${JSON.stringify(DSH_NATIVE_REPLY)},{detail:${JSON.stringify(packet)}}))`, returnByValue: true, awaitPromise: false});
++    if (result.exceptionDetails) throw new Error("Native wallpaper reply delivery failed");
++  };
++  const cancel = (entry) => {
++    entry.cancelled = true;
++    entry.controller.abort();
++    entry.waiting?.reject(new Error("Native wallpaper request cancelled"));
++    entry.queueWake?.();
++    clearTimeout(entry.timer);
++  };
++  const serve = async (message, contextId) => {
++    const id = message.id;
++    if (active.has(id) || active.size >= 32) return deliver(contextId, {id, phase: "error", error: "native-request-capacity"});
++    const allowed = new Set(["op", "id", "url", "method", "headers", "bodyBase64"]);
++    if (Object.keys(message).some(key => !allowed.has(key)) || typeof message.url !== "string" || message.url.length > 16384 || !mapDshProxyUrl(message.url, nativeOrigin, config)) throw new Error("Invalid bound wallpaper URL");
++    const method = message.method ?? "GET";
++    if (!DSH_PROXY_METHODS.has(method) || !Array.isArray(message.headers) || message.headers.length > 32) throw new Error("Invalid bound wallpaper request");
++    const headers = {};
++    const seenHeaders = new Set();
++    for (const pair of message.headers) {
++      if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string" || typeof pair[1] !== "string" || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(pair[0]) || pair[1].length > 8192 || /[\r\n\0]/.test(pair[1])) throw new Error("Invalid bound wallpaper header");
++      const name = pair[0].toLowerCase();
++      if (seenHeaders.has(name)) throw new Error("Duplicate bound wallpaper header");
++      seenHeaders.add(name); headers[name] = pair[1];
++    }
++    let postDataEntries;
++    if (message.bodyBase64 !== undefined) {
++      const encoded = message.bodyBase64;
++      if (typeof encoded !== "string" || encoded.length > Math.ceil(DSH_PROXY_BODY_MAX_BYTES / 3) * 4 || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) throw new Error("Bound wallpaper body exceeds its limit");
++      const bytes = Buffer.from(encoded, "base64");
++      if (bytes.length > DSH_PROXY_BODY_MAX_BYTES || bytes.toString("base64") !== encoded) throw new Error("Invalid bound wallpaper body");
++      if (bytes.length) postDataEntries = [{bytes: encoded}];
++    }
++    const entry = {id, contextId, controller: new AbortController(), cancelled: false, waiting: null, queueWake: null, bytes: 0, timer: null};
++    entry.timer = setTimeout(() => cancel(entry), 120000);
++    active.set(id, entry);
++    let executing = false;
++    try {
++      while (!stopped && !entry.cancelled && running >= 4) {
++        await new Promise(resolve => {entry.queueWake = resolve; queued.add(resolve);});
++        queued.delete(entry.queueWake); entry.queueWake = null;
++      }
++      if (stopped || entry.cancelled) return;
++      running++; executing = true;
++      await transport.handleVirtual({url: message.url, method, headers, postDataEntries}, async (status, bytes, responseHeaders) => {
++        if (entry.cancelled || !allowedContext(contextId)) throw new Error("Native wallpaper request cancelled");
++        if (bufferedBytes + bytes.length > DSH_PROXY_PACKAGE_MAX_BYTES + DSH_PROXY_ASSET_MAX_BYTES) throw new Error("Native wallpaper response capacity exceeded");
++        bufferedBytes += bytes.length; entry.bytes = bytes.length;
++        try {
++          await deliver(contextId, {id, phase: "headers", status, headers: responseHeaders.map(header => [header.name, header.value]), byteLength: bytes.length, chunkSize: DSH_BINDING_CHUNK});
++          for (let offset = 0, index = 0; offset < bytes.length; offset += DSH_BINDING_CHUNK, index++) {
++            if (entry.cancelled) throw new Error("Native wallpaper request cancelled");
++            let timeout;
++            const acknowledged = new Promise((resolve, reject) => {
++              timeout = setTimeout(() => reject(new Error("Native wallpaper chunk acknowledgement timed out")), 30000);
++              entry.waiting = {index, resolve, reject};
++            });
++            void acknowledged.catch(() => {});
++            // Install the waiter before emitting: the renderer may acknowledge
++            // synchronously while Runtime.evaluate is still returning.
++            try {
++              await deliver(contextId, {id, phase: "chunk", index, chunkBase64: bytes.subarray(offset, Math.min(bytes.length, offset + DSH_BINDING_CHUNK)).toString("base64")});
++              await acknowledged;
++            } finally { clearTimeout(timeout); entry.waiting = null; }
++          }
++          await deliver(contextId, {id, phase: "end"});
++        } finally { bufferedBytes -= entry.bytes; entry.bytes = 0; }
++      }, entry.controller.signal);
++    } finally {
++      clearTimeout(entry.timer);
++      entry.waiting?.reject(new Error("Native wallpaper transfer closed"));
++      if (executing) running--;
++      for (const wake of queued) wake();
++      queued.clear();
++      active.delete(id);
++    }
++  };
++  const handleCalled = async event => {
++    if (event.name !== DSH_NATIVE_BINDING || !allowedContext(event.executionContextId) || typeof event.payload !== "string" || Buffer.byteLength(event.payload, "utf8") > 2 * 1024 * 1024) return;
++    let message;
++    try { message = JSON.parse(event.payload); } catch { return; }
++    if (!message || typeof message !== "object" || Array.isArray(message) || typeof message.id !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(message.id)) return;
++    try {
++      if (message.op === "request") await serve(message, event.executionContextId);
++      else if (message.op === "ack" && Object.keys(message).every(key => ["op", "id", "index"].includes(key))) {
++        const entry = active.get(message.id);
++        if (entry?.contextId === event.executionContextId && Number.isSafeInteger(message.index) && entry.waiting?.index === message.index) entry.waiting.resolve();
++      } else if (message.op === "cancel" && Object.keys(message).every(key => ["op", "id"].includes(key))) {
++        const entry = active.get(message.id); if (entry?.contextId === event.executionContextId) cancel(entry);
++      }
++    } catch {
++      if (allowedContext(event.executionContextId) && !active.get(message.id)?.cancelled) await deliver(event.executionContextId, {id: message.id, phase: "error", error: "native-wallpaper-request-failed"}).catch(() => {});
++    }
++  };
++  const listener = event => { void handleCalled(event); };
++  session.on("Runtime.bindingCalled", listener);
++  try { await session.send("Runtime.addBinding", {name: DSH_NATIVE_BINDING}); }
++  catch (error) { session.off("Runtime.bindingCalled", listener); if (ownsTransport) await transport.dispose(); throw error; }
++  const binding = {signature, handleCalled, activeCount: () => active.size, async dispose() {
++    if (stopped) return; stopped = true;
++    session.off("Runtime.bindingCalled", listener);
++    for (const entry of active.values()) cancel(entry);
++    await session.send("Runtime.removeBinding", {name: DSH_NATIVE_BINDING}).catch(() => {});
++    if (ownsTransport) await transport.dispose();
++    if (session.dreamSkinDshBinding === binding) delete session.dreamSkinDshBinding;
++  }};
++  session.dreamSkinDshBinding = binding;
++  return binding;
++}
++
+ export async function loadTheme(themeDir, preferenceOptions = {}) {
++  const sceneAddon = await readSceneAddon();
++  const dshNative = await readDshNativeAddon();
+   const realThemeDir = await fs.realpath(themeDir);
+   const themePath = path.join(realThemeDir, "theme.json");
+   const themeText = await fs.readFile(themePath, "utf8");
+@@ -877,6 +1547,14 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
+   if (wallpaperEngineReference) {
+     theme.media.source = "wallpaper-engine-local";
+   }
++  if (sceneAddon.url) {
++    theme.sceneLiveUrl = sceneAddon.url;
++    // Never inherit the legacy fMP4 stream's session-wide CSP bypass when
++    // switching from that transport to a local scene iframe.
++    delete theme.media.streamUrl;
++    delete theme.media.codec;
++    theme.media.type = sourceMediaType;
++  }
+   const userTransparency = await readThemeTransparency(theme.id, { preferencesPath: themePreferencesPath("win32"), ...preferenceOptions });
+   if (userTransparency !== undefined) theme.userTransparency = userTransparency;
+   const [themeStat, mediaStat, safeCss] = await Promise.all([
+@@ -922,6 +1600,9 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
+   theme.media.size = mediaStat.size;
+   fingerprintHash
+     .update(JSON.stringify({ userTransparency: theme.userTransparency }))
++    .update(sceneAddon.stamp)
++    .update("\0")
++    .update(dshNative.stamp)
+     .update("\0")
+     .update(safeCss?.source ?? "");
+   const fingerprint = fingerprintHash.digest("hex");
+@@ -939,11 +1620,13 @@ export async function loadTheme(themeDir, preferenceOptions = {}) {
+     artMime,
+     mediaMime,
+     mediaSize: mediaStat.size,
+-    mediaType: inferredMediaType,
+-    mediaStreamUrl: streamUrl,
++    mediaType: sceneAddon.url ? sourceMediaType : inferredMediaType,
++    mediaStreamUrl: sceneAddon.url || dshNative.config ? null : streamUrl,
+     fingerprint,
++    dshNative,
++    sceneAddonStamp: sceneAddon.stamp,
+     sourceStamp: `${themeStat.size}:${themeStat.mtimeMs}:${mediaStat.size}:${mediaStat.mtimeMs}:` +
+-      (safeCss ? `${safeCss.stat.size}:${safeCss.stat.mtimeMs}` : "none"),
++      (safeCss ? `${safeCss.stat.size}:${safeCss.stat.mtimeMs}` : "none") + `:${sceneAddon.stamp}:${dshNative.stamp}`,
+   };
+ }
+ 
+@@ -971,6 +1654,7 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
+     .update(combinedCss)
+     .update(template)
+     .update(JSON.stringify(loadedTheme.theme))
++    .update(loadedTheme.dshNative?.stamp ?? "none")
+     .digest("hex")
+     .slice(0, 20);
+   // Every replacement uses a function so String.prototype.replace never
+@@ -1006,6 +1690,8 @@ export async function loadPayload(themeDir = path.join(root, "assets"), candidat
+ 
+ export function isOpacityOnlyThemeChange(previous, next) {
+   if (!previous || !next ||
++      previous.dshNative?.config || next.dshNative?.config ||
++      previous.dshNative?.stamp !== next.dshNative?.stamp ||
+       previous.mediaPath !== next.mediaPath ||
+       previous.mediaType !== next.mediaType ||
+       previous.mediaMime !== next.mediaMime ||
+@@ -1038,8 +1724,10 @@ async function readThemeSourceStamp(loadedTheme) {
+       throw error;
+     }),
+   ]);
++  const sceneAddon = await readSceneAddon();
++  const dshNative = await readDshNativeAddon();
+   return `${themeStat.size}:${themeStat.mtimeMs}:${imageStat.size}:${imageStat.mtimeMs}:` +
+-    (cssStat ? `${cssStat.size}:${cssStat.mtimeMs}` : "none");
++    (cssStat ? `${cssStat.size}:${cssStat.mtimeMs}` : "none") + `:${sceneAddon.stamp}:${dshNative.stamp}`;
+ }
+ 
+ async function probeSession(session) {
+@@ -1273,7 +1961,34 @@ export async function setStreamCspBypass(session, enabled) {
+   return requested;
+ }
+ 
+-async function applyToSession(session, loadedPayload) {
++export async function applyToSession(session, loadedPayload) {
++  if (!loadedPayload || typeof loadedPayload !== "object" || typeof loadedPayload.payload !== "string") {
++    throw new Error("Expected a complete loaded wallpaper payload");
++  }
++  if (loadedPayload.dshNative?.config) {
++    await removeFromSession(session);
++    const proxy = await installDshProxy(session, loadedPayload.dshNative.config);
++    let binding;
++    try { binding = await installDshBinding(session, loadedPayload.dshNative.config, {proxy}); }
++    catch (error) { await proxy.dispose(); throw error; }
++    session.dshNativeDesired = true;
++    try {
++      const expression = `(async () => {
++        const result = await (${loadedPayload.dshNative.source})(${JSON.stringify(proxy.nativeOrigin)});
++        const state = window.__GPT_DSH_NATIVE_STATE__;
++        if (!state || typeof state.cleanup !== 'function') throw new Error('Native wallpaper client did not install its state');
++        state.transportRevision = ${JSON.stringify(loadedPayload.revision)};
++        return result;
++      })()`;
++      return await session.evaluate(expression);
++    } catch (error) {
++      await binding.dispose();
++      await proxy.dispose();
++      throw error;
++    }
++  }
++  if (session.dreamSkinDshProxy || session.dshNativeDesired) await removeFromSession(session);
++  session.dshNativeDesired = false;
+   const streamEnabled = Boolean(loadedPayload.mediaStreamUrl);
+   await setStreamCspBypass(session, streamEnabled);
+   try {
+@@ -1524,6 +2239,8 @@ async function presentOperationUi(session, token, state, message, timeoutMs = 10
+ async function removeFromSession(session) {
+   try {
+     return await session.evaluate(`(() => {
++      try { window.__GPT_DSH_NATIVE_STATE__?.cleanup?.(); } catch {}
++      delete window.__GPT_DSH_NATIVE_STATE__;
+       window.__CODEX_DREAM_SKIN_DISABLED__ = true;
+       const state = window.__CODEX_DREAM_SKIN_STATE__;
+       let cleaned = false;
+@@ -1551,10 +2268,13 @@ async function removeFromSession(session) {
+       document.getElementById('codex-dream-skin-style')?.remove();
+       document.getElementById('codex-dream-skin-chrome')?.remove();
+       document.getElementById('codex-dream-skin-media')?.remove();
++      document.getElementById('codex-dream-skin-scene')?.remove();
+       delete window.__CODEX_DREAM_SKIN_STATE__;
+       return true;
+     })()`);
+   } finally {
++    await session.dreamSkinDshBinding?.dispose();
++    await session.dreamSkinDshProxy?.dispose();
+     await setStreamCspBypass(session, false).catch(() => {});
+   }
+ }
+@@ -1573,6 +2293,7 @@ async function verifyRemovedSession(session) {
+     return !hasAttributes && !hasVariables && !hasParts && !hasSheets &&
+       !document.getElementById('codex-dream-skin-style') &&
+       !document.getElementById('codex-dream-skin-media') &&
++      !window.__GPT_DSH_NATIVE_STATE__ &&
+       !window.__CODEX_DREAM_SKIN_STATE__;
+   })()`);
+ }
+@@ -1589,6 +2310,45 @@ export async function verifySession(
+   expectedRevision = null,
+ ) {
+   const nativeWindow = await inspectTargetWindow(session, targetId);
++  if (session.dshNativeDesired) {
++    return session.evaluate(`(() => {
++      const state = window.__GPT_DSH_NATIVE_STATE__;
++      const summary = state?.summary?.() ?? state ?? {};
++      const style = document.getElementById('codex-we-native-style');
++      let stylesheetApplied = false;
++      try {
++        // The authenticated native factory keeps the owned constructable sheet
++        // in a closure. Its probe verifies adopted membership and real rules;
++        // a CSP-blocked inline node or a merely truthy marker is insufficient.
++        stylesheetApplied = typeof state?.stylesheetApplied === 'function'
++          ? state.stylesheetApplied() === true
++          : Boolean(style?.sheet?.cssRules?.length > 0);
++      } catch {}
++      const stylePresent = Boolean(style?.isConnected && stylesheetApplied);
++      const main = document.querySelector('main, [role="main"]');
++      const sidebar = document.querySelector('aside.app-shell-left-panel');
++      const documentPass = location.protocol === 'app:' && document.visibilityState === 'visible' && !document.hidden;
++      const viewportPass = innerWidth >= ${MIN_RENDERER_VIEWPORT_WIDTH} && innerHeight >= ${MIN_RENDERER_VIEWPORT_HEIGHT};
++      const structurePass = Boolean(main && sidebar && Number(summary.surfaceCount) > 0);
++      const nativeWindow = ${JSON.stringify(nativeWindow)};
++      const nativeWindowPass = nativeWindow.pass === true;
++      const fallbackWindowPass = nativeWindow.unsupported === true && documentPass && viewportPass && structurePass;
++      const expectedRevision = ${JSON.stringify(expectedRevision)};
++      const revision = state?.transportRevision ?? null;
++      const ready = state?.ready === true && !state.error && summary.wallpaperPresent === true;
++      const result = {
++        installed: Boolean(state), stylePresent, nativeDsh: true, themeId: null,
++        revision, expectedRevision, ready, error: state?.error ?? null,
++        summary, nativeWindow, documentHidden: document.hidden,
++        documentVisibility: document.visibilityState,
++        viewport: {width: innerWidth, height: innerHeight},
++        readiness: {documentPass, viewportPass, structurePass, nativeWindowPass, fallbackWindowPass, windowPass: nativeWindowPass || fallbackWindowPass},
++      };
++      result.pass = result.installed && stylePresent && ready && documentPass && viewportPass && structurePass &&
++        result.readiness.windowPass && (!expectedRevision || revision === expectedRevision);
++      return result;
++    })()`);
++  }
+   return session.evaluate(`(() => {
+     const box = (node) => {
+       if (!node) return null;
+@@ -1865,8 +2625,10 @@ async function runFinishOperation(options) {
+   if (!shown) throw new Error("Could not show the completed operation state in the verified Codex renderer");
+ }
+ 
+-async function runOneShot(options) {
+-  const connected = await connectCodexTargets(options.port, options.timeoutMs, options.browserId);
++export async function runOneShot(options, dependencies = {}) {
++  const connectTargets = dependencies.connectTargets ?? connectCodexTargets;
++  const preparePayload = dependencies.loadPayload ?? loadPayload;
++  const connected = await connectTargets(options.port, options.timeoutMs, options.browserId);
+   const operationToken = options.mode === "once" || options.mode === "remove"
+     ? options.operationToken ?? nextOperationToken()
+     : null;
+@@ -1881,7 +2643,7 @@ async function runOneShot(options) {
+   let loadedPayload = null;
+   try {
+     loadedPayload = (options.mode === "once" || options.mode === "verify" || options.reload)
+-      ? await loadPayload(options.themeDir) : null;
++      ? await preparePayload(options.themeDir) : null;
+   } catch (error) {
+     if (operationToken) {
+       await Promise.all(connected.map(({ session }) => presentOperationUi(
+@@ -1891,12 +2653,12 @@ async function runOneShot(options) {
+     for (const { session } of connected) session.close();
+     throw error;
+   }
+-  const payload = loadedPayload?.payload ?? null;
+   const results = [];
+   let screenshotCaptured = false;
+   try {
+     for (const { target, session, probe } of connected) {
+       try {
++        session.dshNativeDesired = Boolean(loadedPayload?.dshNative?.config);
+         if (options.mode === "remove") await removeFromSession(session);
+         else if (options.mode === "once") {
+           if (operationToken) {
+@@ -1905,7 +2667,10 @@ async function runOneShot(options) {
+               `正在应用「${loadedPayload.theme.name}」…`,
+             );
+           }
+-          await applyToSession(session, payload);
++          // The native DSH resource proxy belongs to the long-lived watcher.
++          // A short --once retry must not steal its Fetch interception and then
++          // drop it again as this verification process exits.
++          if (!session.dshNativeDesired) await applyToSession(session, loadedPayload);
+           await new Promise((resolve) => setTimeout(resolve, 850));
+         }
+         if (options.reload) {
+@@ -1918,7 +2683,7 @@ async function runOneShot(options) {
+                 `正在应用「${loadedPayload.theme.name}」…`,
+               );
+             }
+-            await applyToSession(session, payload);
++            if (!session.dshNativeDesired) await applyToSession(session, loadedPayload);
+           }
+         }
+         if (operationToken) {
+@@ -2110,6 +2875,7 @@ async function runWatch(options) {
+       if (pauseChanged || payloadChanged) {
+         for (const [id, session] of sessions) {
+           try {
++            session.dshNativeDesired = Boolean(loadedPayload.dshNative?.config);
+             const previousEarlyScript = earlyScripts.get(id);
+             if (paused) {
+               await removeFromSession(session);
+@@ -2118,18 +2884,23 @@ async function runWatch(options) {
+               fallbackTargets.delete(id);
+             } else {
+               let nextEarlyScript = null;
+-              try {
+-                nextEarlyScript = await registerEarlyPayload(
+-                  session,
+-                  loadedPayload.payload,
+-                  loadedPayload.fingerprint,
+-                );
+-                if (!nextEarlyScript) throw new Error("CDP did not return an early-script identifier");
+-                fallbackTargets.set(id, false);
+-              } catch (error) {
++              if (session.dshNativeDesired) {
+                 fallbackTargets.set(id, true);
+-                console.error(`[dream-skin] early theme refresh unavailable for ${id}: ${error.message}`);
+                 attachLoadFallback(id, { id }, session);
++              } else {
++                try {
++                  nextEarlyScript = await registerEarlyPayload(
++                    session,
++                    loadedPayload.payload,
++                    loadedPayload.fingerprint,
++                  );
++                  if (!nextEarlyScript) throw new Error("CDP did not return an early-script identifier");
++                  fallbackTargets.set(id, false);
++                } catch (error) {
++                  fallbackTargets.set(id, true);
++                  console.error(`[dream-skin] early theme refresh unavailable for ${id}: ${error.message}`);
++                  attachLoadFallback(id, { id }, session);
++                }
+               }
+               if (nextEarlyScript) earlyScripts.set(id, nextEarlyScript);
+               else earlyScripts.delete(id);
+@@ -2181,8 +2952,9 @@ async function runWatch(options) {
+         try {
+           session = await connectTarget(target, options.port);
+           if (identityAnchor.closed) throw new CdpIdentityMismatchError("Original CDP browser identity closed");
+-          let earlyInjectionFallback = false;
+-          if (!paused) {
++          session.dshNativeDesired = Boolean(loadedPayload.dshNative?.config);
++          let earlyInjectionFallback = session.dshNativeDesired;
++          if (!paused && !session.dshNativeDesired) {
+             try {
+               earlyScriptId = await registerEarlyPayload(
+                 session,
+diff --git a/windows/scripts/start-dream-skin.ps1 b/windows/scripts/start-dream-skin.ps1
+index 120fb4b..ab7aa0b 100644
+--- a/windows/scripts/start-dream-skin.ps1
++++ b/windows/scripts/start-dream-skin.ps1
+@@ -5,6 +5,7 @@ param(
+   [switch]$PromptRestart,
+   [string]$ProfilePath,
+   [switch]$ForegroundInjector,
++  [ValidateRange(30, 600)][int]$VerificationTimeoutSeconds = 90,
+   [ValidateRange(0, 300000)][int]$OperationLockTimeoutMilliseconds = 0,
+   [switch]$RequireUnpaused,
+   [string]$SavedThemeDirectory,
+@@ -583,7 +584,7 @@ try {
+     # shell markers are not rendered yet when the daemon has barely started,
+     # and a single early miss used to tear the whole startup down.  The
+     # watcher keeps applying in the background, so retry until a deadline.
+-    $verifyDeadline = (Get-Date).AddSeconds(90)
++    $verifyDeadline = (Get-Date).AddSeconds($VerificationTimeoutSeconds)
+     $forceInjectedAfterVerifyFailure = $false
+     while ($true) {
+       $verify = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
+diff --git a/windows/tests/run-tests.ps1 b/windows/tests/run-tests.ps1
+index da22c48..734007b 100644
+--- a/windows/tests/run-tests.ps1
++++ b/windows/tests/run-tests.ps1
+@@ -1034,12 +1034,20 @@ try {
+       $uninspectableLaunch.ArgumentStatus -cne 'uninspectable') {
+       throw 'An uninspectable package process was not kept on the conservative package-activation path.'
+     }
+-    Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value { param($Codex, $Port) return 'not-forwarded' }
++    $script:dreamSkinDebugStatusCall = 0
++    Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value {
++      param($Codex, $Port)
++      $script:dreamSkinDebugStatusCall += 1
++      if ($script:dreamSkinDebugStatusCall -eq 1) { return 'not-forwarded' }
++      return 'forwarded'
++    }
++    Set-Item 'function:Start-DreamSkinCodexDirect' -Value { param($Codex, $Arguments) return 202 }
+     $notForwardedLaunch = Start-DreamSkinCodexForDebugging -Codex $fakeInstall `
+       -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @()
+-    if ($notForwardedLaunch.Strategy -cne 'package-activation' -or
+-      $notForwardedLaunch.ArgumentStatus -cne 'not-forwarded') {
+-      throw 'A command-line observation without explicit protocol redirection triggered an unsafe fallback.'
++    if ($notForwardedLaunch.Strategy -cne 'direct-store-executable' -or
++      $notForwardedLaunch.PackageArgumentStatus -cne 'not-forwarded' -or
++      $notForwardedLaunch.ArgumentStatus -cne 'forwarded') {
++      throw 'Confirmed dropped switches did not use the validated direct Store fallback.'
+     }
+ 
+     $script:dreamSkinDebugStatusCall = 0
+diff --git a/windows/tests/start-renderer-readiness.tests.ps1 b/windows/tests/start-renderer-readiness.tests.ps1
+index 53bd4e1..db02f66 100644
+--- a/windows/tests/start-renderer-readiness.tests.ps1
++++ b/windows/tests/start-renderer-readiness.tests.ps1
+@@ -59,6 +59,7 @@ function Exit-DreamSkinOperationLock {
+   if ($Mutex -eq 'mock-lock') { $script:lockExited = $true }
+ }
+ function Assert-DreamSkinPort { param([int]$Port) }
++function Test-DreamSkinRemoteSession { return $false }
+ function Get-DreamSkinNodeRuntime {
+   return [pscustomobject]@{ Path = 'mock-node.exe'; Version = '22.23.1' }
+ }
+diff --git a/windows/tests/start-result-contract.tests.ps1 b/windows/tests/start-result-contract.tests.ps1
+index b776927..3655e12 100644
+--- a/windows/tests/start-result-contract.tests.ps1
++++ b/windows/tests/start-result-contract.tests.ps1
+@@ -117,6 +117,36 @@ try {
+     Set-Item 'function:Get-DreamSkinCodexProcesses' -Value { return @() }
+     Set-Item 'function:Start-DreamSkinCodexDirect' -Value { return 202 }
+     $script:startResultStatusCall = 0
++    $script:startResultPreserved = @()
++    Set-Item 'function:Stop-DreamSkinCodex' -Value {
++      param($Codex, [int[]]$PreserveProcessIds, [switch]$AllowForce)
++      $script:startResultPreserved = @($PreserveProcessIds)
++    }
++    Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value {
++      $script:startResultStatusCall += 1
++      if ($script:startResultStatusCall -eq 1) { return 'not-forwarded' }
++      return 'forwarded'
++    }
++    $droppedSwitchLaunch = Start-DreamSkinCodexForDebugging -Codex $fakeCodex `
++      -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @(11, 22)
++    if ($droppedSwitchLaunch.Strategy -cne 'direct-store-executable' -or
++        $droppedSwitchLaunch.PackageArgumentStatus -cne 'not-forwarded' -or
++        ($script:startResultPreserved -join ',') -cne '11,22') {
++      throw 'Confirmed dropped switches did not preserve baseline processes through the direct fallback.'
++    }
++    Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value { return 'uninspectable' }
++    Set-Item 'function:Start-DreamSkinCodexDirect' -Value { throw 'Unknown launch state must not use direct fallback.' }
++    Set-Item 'function:Stop-DreamSkinCodex' -Value { throw 'Unknown launch state must not stop any process.' }
++    $unknownLaunch = Start-DreamSkinCodexForDebugging -Codex $fakeCodex `
++      -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @(11, 22)
++    if ($unknownLaunch.Strategy -cne 'package-activation') {
++      throw 'Uninspectable package activation did not remain on the conservative path.'
++    }
++    Set-Item 'function:Start-DreamSkinCodexDirect' -Value { return 202 }
++    Set-Item 'function:Stop-DreamSkinCodex' -Value {
++      param($Codex, [int[]]$PreserveProcessIds, [switch]$AllowForce)
++    }
++    $script:startResultStatusCall = 0
+     Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value {
+       $script:startResultStatusCall += 1
+       if ($script:startResultStatusCall -eq 1) { return 'protocol-redirected' }
+diff --git a/windows/tests/dsh-proxy.test.mjs b/windows/tests/dsh-proxy.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/windows/tests/dsh-proxy.test.mjs
+@@ -0,0 +1,585 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import fs from "node:fs/promises";
++import path from "node:path";
++import os from "node:os";
++import http from "node:http";
++import vm from "node:vm";
++import {createHash} from "node:crypto";
++import {
++  normalizeDshNativeConfig, readDshNativeAddon, dshNativeOrigin, mapDshProxyUrl,
++  installDshProxy as installDshProxyWithLogs, applyToSession, runOneShot, verifySession, loadPayload, dshRequestBodyLimit,
++  installDshBinding, DSH_NATIVE_BINDING,
++  isDshPackageResource,
++} from "../scripts/injector.mjs";
++
++const token = "a".repeat(64);
++const digest = "b".repeat(64);
++const config = (origin = "http://127.0.0.1:18765") => ({enabled: true, origin, token, scriptHash: digest});
++const installDshProxy = (target, value, options = {}) => installDshProxyWithLogs(target, value, {onDiagnostic: () => {}, ...options});
++
++function session(targetUrl = "app://codex/index.html") {
++  const handlers = new Map();
++  return {
++    target: {url: targetUrl}, closed: false, messages: [], evaluations: [],
++    executionContexts: new Map([[1, {id: 1, origin: dshNativeOrigin(targetUrl), auxData: {isDefault: true, frameId: "main-frame"}}]]),
++    on(name, callback) { handlers.set(name, callback); },
++    off(name, callback) { if (handlers.get(name) === callback) handlers.delete(name); },
++    async send(method, params = {}) {
++      this.messages.push({method, params});
++      if (method === "Page.getFrameTree") return {frameTree: {frame: {id: "main-frame", url: targetUrl}}};
++      if (method === "Browser.getWindowForTarget") return {windowId: 1, bounds: {width: 900, height: 700, windowState: "normal"}};
++      if (method === "Browser.getWindowBounds") return {bounds: {width: 900, height: 700, windowState: "normal"}};
++      return {};
++    },
++    async evaluate(expression) { this.evaluations.push(expression); return {visible: true, pass: true}; },
++    close() { this.closed = true; },
++  };
++}
++
++function paused(relative, {method = "GET", headers = {}, postData, hasPostData, postDataEntries} = {}) {
++  return {requestId: "request-1", request: {url: `app://codex/dsh/${token}/${relative}`, method, headers, postData, hasPostData, postDataEntries}};
++}
++
++function fulfilled(target) {
++  const message = target.messages.findLast(item => item.method === "Fetch.fulfillRequest");
++  assert.ok(message, "Expected an intercepted response");
++  return {...message.params, bytes: Buffer.from(message.params.body, "base64")};
++}
++
++test("native DSH config and app-origin parsing reject other origins and unsafe states", () => {
++  assert.deepEqual(normalizeDshNativeConfig(config()), config());
++  assert.equal(normalizeDshNativeConfig({enabled: false}), null);
++  for (const input of [null, [], {}, {enabled: 1}, {...config(), extra: "x"},
++    {...config(), origin: "http://localhost:18765"}, {...config(), origin: "https://127.0.0.1:18765"},
++    {...config(), origin: "http://127.0.0.1:80"}, {...config(), origin: "http://127.0.0.1:018765"},
++    {...config(), origin: "http://127.0.0.1:18765/path"}, {...config(), token: "short"},
++    {...config(), scriptHash: "not-a-hash"}, Object.create(config()), JSON.parse('{"enabled":true,"__proto__":{}}')]) {
++    assert.throws(() => normalizeDshNativeConfig(input));
++  }
++  assert.equal(dshNativeOrigin("app://-/index.html?initialRoute=%2Fthread"), "app://-");
++  assert.equal(dshNativeOrigin("app://codex/"), "app://codex");
++  assert.equal(new URL("app://codex/").origin, "null", "Do not use URL.origin for the native scheme");
++  for (const input of ["https://codex/", "app://user@codex/", "app://codex:1234/", "app:///index.html"]) assert.throws(() => dshNativeOrigin(input));
++  assert.equal(mapDshProxyUrl(`app://codex/dsh/${token}/wallpaper-engine/settings?q=1`, "app://codex", config()), `http://127.0.0.1:18765/dsh/${token}/wallpaper-engine/settings?q=1`);
++  for (const input of [`app://other/dsh/${token}/settings`, `https://codex/dsh/${token}/settings`, `app://codex/dsh/${"c".repeat(64)}/settings`, "app://codex/index.html"]) {
++    assert.equal(mapDshProxyUrl(input, "app://codex", config()), null);
++  }
++  assert.throws(() => mapDshProxyUrl(`app://codex/dsh/${token}/%2fprivate`, "app://codex", config()));
++});
++
++test("fixed local factory requires exact SHA256, bounded plain configuration, and updates the watcher stamp", async () => {
++  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "native-dsh-config-"));
++  const directory = path.join(temporary, "GPTWallpaper");
++  await fs.mkdir(directory);
++  try {
++    const source = "function(nativeOrigin){ return {nativeOrigin}; }";
++    const scriptHash = createHash("sha256").update(source).digest("hex");
++    await fs.writeFile(path.join(directory, "native-client.js"), source);
++    await fs.writeFile(path.join(directory, "dsh-native.json"), JSON.stringify({...config(), scriptHash}));
++    const first = await readDshNativeAddon(temporary);
++    assert.equal(first.source, source); assert.equal(first.config.scriptHash, scriptHash);
++    await fs.writeFile(path.join(directory, "native-client.js"), source + " ");
++    const mismatch = await readDshNativeAddon(temporary);
++    assert.equal(mismatch.config, null); assert.notEqual(mismatch.stamp, first.stamp);
++    await fs.writeFile(path.join(directory, "dsh-native.json"), "x".repeat(8193));
++    assert.equal((await readDshNativeAddon(temporary)).config, null);
++    await fs.writeFile(path.join(directory, "dsh-native.json"), JSON.stringify({enabled: false}));
++    assert.equal((await readDshNativeAddon(temporary)).config, null);
++    const outside = path.join(temporary, "redirected"); await fs.mkdir(outside);
++    await fs.writeFile(path.join(outside, "native-client.js"), source);
++    await fs.writeFile(path.join(outside, "dsh-native.json"), JSON.stringify({...config(), scriptHash}));
++    await fs.rename(directory, path.join(temporary, "original-state"));
++    // Junctions exercise the redirected-component boundary on Windows without
++    // relying on file-symlink privileges or substituting a weaker assertion.
++    await fs.symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
++    assert.equal((await readDshNativeAddon(temporary)).config, null);
++  } finally { await fs.rm(temporary, {recursive: true, force: true}); }
++});
++
++test("native addon fingerprint participates in loaded theme and revision without altering saved theme JSON", async () => {
++  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "native-dsh-payload-"));
++  const before = process.env.LOCALAPPDATA;
++  process.env.LOCALAPPDATA = temporary;
++  const themeDirectory = path.join(temporary, "theme");
++  const addonDirectory = path.join(temporary, "GPTWallpaper");
++  await fs.mkdir(themeDirectory); await fs.mkdir(addonDirectory);
++  try {
++    await fs.copyFile(new URL("../assets/dream-reference.jpg", import.meta.url), path.join(themeDirectory, "poster.jpg"));
++    const theme = JSON.stringify({schemaVersion: 1, id: "native-test", image: "poster.jpg"});
++    await fs.writeFile(path.join(themeDirectory, "theme.json"), theme);
++    const plain = await loadPayload(themeDirectory);
++    const source = "function(nativeOrigin){return {nativeOrigin};}";
++    const scriptHash = createHash("sha256").update(source).digest("hex");
++    await fs.writeFile(path.join(addonDirectory, "native-client.js"), source);
++    await fs.writeFile(path.join(addonDirectory, "dsh-native.json"), JSON.stringify({...config(), scriptHash}));
++    const native = await loadPayload(themeDirectory);
++    assert.equal(native.dshNative.source, source);
++    assert.notEqual(native.fingerprint, plain.fingerprint); assert.notEqual(native.sourceStamp, plain.sourceStamp); assert.notEqual(native.revision, plain.revision);
++    assert.equal(await fs.readFile(path.join(themeDirectory, "theme.json"), "utf8"), theme);
++  } finally {
++    if (before === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = before;
++    await fs.rm(temporary, {recursive: true, force: true});
++  }
++});
++
++test("proxy rewrites only the authenticated text base, preserves binary bytes and never forwards cookies", async () => {
++  const seen = [];
++  let origin;
++  const server = http.createServer(async (request, response) => {
++    let body = ""; for await (const bytes of request) body += bytes;
++    seen.push({url: request.url, method: request.method, headers: request.headers, body});
++    if (request.url.endsWith("/binary")) {
++      response.writeHead(200, {"Content-Type": "application/octet-stream"}); response.end(Buffer.from([0, 255, 1, 128]));
++    } else if (request.url.endsWith("/redirect")) {
++      response.writeHead(302, {Location: "https://example.invalid/"}); response.end();
++    } else {
++      response.writeHead(200, {"Content-Type": "application/json; charset=utf-8", "Set-Cookie": "secret=value", ETag: "old", Location: "https://outside.invalid/"});
++      response.end(JSON.stringify({url: `${origin}/dsh/${token}/wallpaper-engine/media/file`, untouched: `${origin}/outside`}));
++    }
++  });
++  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
++  origin = `http://127.0.0.1:${server.address().port}`;
++  const target = session();
++  const proxy = await installDshProxy(target, config(origin));
++  try {
++    assert.deepEqual(target.messages[0], {method: "Fetch.enable", params: {patterns: [{urlPattern: `app://codex/dsh/${token}/*`, requestStage: "Request"}]}});
++    await proxy.handlePaused(paused("wallpaper-engine/settings", {method: "PATCH", headers: {"Content-Type": "application/json", Cookie: "private", Authorization: "Bearer private", Origin: "app://codex"}, postData: '{"blur":20}'}));
++    const response = fulfilled(target); const json = JSON.parse(response.bytes.toString());
++    assert.equal(response.responseCode, 200); assert.equal(json.url, `app://codex/dsh/${token}/wallpaper-engine/media/file`); assert.equal(json.untouched, `${origin}/outside`);
++    assert.equal(seen[0].headers.origin, origin); assert.equal(seen[0].headers.cookie, undefined); assert.equal(seen[0].headers.authorization, undefined); assert.equal(seen[0].body, '{"blur":20}');
++    assert.equal(response.responseHeaders.some(header => ["set-cookie", "location", "etag"].includes(header.name.toLowerCase())), false);
++    assert.equal(response.responseHeaders.find(header => header.name === "Content-Length").value, String(response.bytes.length));
++    await proxy.handlePaused(paused("binary"));
++    assert.deepEqual([...fulfilled(target).bytes], [0, 255, 1, 128]);
++    const count = seen.length;
++    await proxy.handlePaused({requestId: "unrelated", request: {method: "GET", url: "app://codex/index.html"}});
++    assert.equal(seen.length, count); assert.equal(target.messages.at(-1).method, "Fetch.continueRequest");
++    await proxy.handlePaused(paused("redirect")); assert.equal(fulfilled(target).responseCode, 502);
++    assert.equal(target.messages.some(message => message.method === "Page.setBypassCSP" && message.params.enabled), false);
++  } finally { await proxy.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
++});
++
++test("opaque Web modules and project preflights retain Origin:null and get only scoped CORS", async () => {
++  const target = session();
++  const seen = [];
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async (url, options) => {
++    seen.push({url, ...options});
++    return new Response(options.method === "OPTIONS" ? null : options.method === "HEAD" ? null : "export const active = true;", {
++      status: options.method === "OPTIONS" ? 204 : 200,
++      headers: {"Content-Type": "text/javascript; charset=utf-8", "Access-Control-Allow-Origin": "*",
++        "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Methods": "*", "Access-Control-Allow-Headers": "*", Vary: "*"},
++    });
++  }});
++  const resource = "wallpaper-engine/scene-files/QzpcV2FsbHBhcGVyXHdlYi9pbmRleC5odG1s/scripts/main.mjs";
++  const header = (response, name) => response.responseHeaders.find(item => item.name.toLowerCase() === name.toLowerCase())?.value;
++  try {
++    await proxy.handlePaused({...paused(resource, {headers: {Origin: "null", "x-dsh-desktop-renderer": "untrusted"}}), resourceType: "Script"});
++    const module = fulfilled(target);
++    assert.equal(module.responseCode, 200);
++    assert.equal(module.bytes.toString(), "export const active = true;");
++    assert.equal(seen[0].headers.Origin, "null", "The host must see the opaque origin, never a forged self origin");
++    assert.equal(seen[0].headers["x-dsh-desktop-renderer"], undefined);
++    assert.equal(header(module, "Access-Control-Allow-Origin"), "null", "ES modules require an explicit opaque-origin CORS response");
++    assert.equal(header(module, "Access-Control-Allow-Credentials"), undefined);
++    assert.equal(header(module, "Access-Control-Allow-Methods"), "GET, HEAD, OPTIONS");
++    assert.equal(header(module, "Access-Control-Allow-Headers"), "Range, Content-Type");
++    assert.equal(header(module, "Vary"), "Origin");
++    assert.equal(module.responseHeaders.filter(item => item.name.toLowerCase() === "access-control-allow-origin").length, 1);
++    await proxy.handlePaused(paused(resource, {method: "OPTIONS", headers: {origin: "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "Range, Content-Type"}}));
++    const preflight = fulfilled(target);
++    assert.equal(preflight.responseCode, 204); assert.equal(preflight.bytes.length, 0);
++    assert.equal(seen.at(-1).headers.Origin, "null");
++    assert.equal(seen.at(-1).headers["access-control-request-method"], "GET");
++    assert.equal(header(preflight, "Access-Control-Allow-Origin"), "null");
++    assert.equal(header(preflight, "Access-Control-Max-Age"), "600");
++    await proxy.handlePaused(paused(resource, {method: "HEAD", headers: {Origin: "null"}}));
++    assert.equal(fulfilled(target).responseCode, 200); assert.equal(fulfilled(target).bytes.length, 0);
++    assert.equal(seen.length, 3);
++  } finally { await proxy.dispose(); }
++});
++
++test("opaque control APIs, asset writes and broadened preflights are rejected before upstream fetch", async () => {
++  const target = session();
++  let calls = 0;
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async () => { calls++; return new Response("should not fetch"); }});
++  try {
++    for (const route of ["metadata", "client/0.js", "wallpaper-engine/settings", "wallpaper-engine/media-control", "wallpaper-engine/codex-upload/begin", "wallpaper-engine/scene-live/index.html", "wallpaper-engine/scene-files-other/project/index.html", "wallpaper-engine/scene-files/", "wallpaper-engine/scene-files/project"]) {
++      for (const method of ["GET", "HEAD", "OPTIONS"]) {
++        await proxy.handlePaused(paused(route, {method, headers: {Origin: "null"}}));
++        assert.equal(fulfilled(target).responseCode, 403, `${method} ${route}`);
++      }
++    }
++    const resource = "wallpaper-engine/scene-files/project/index.html";
++    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
++      await proxy.handlePaused(paused(resource, {method, headers: {Origin: "null", "Content-Type": "application/json"}, postData: '{"enabled":true}'}));
++      assert.equal(fulfilled(target).responseCode, 403, method);
++    }
++    for (const headers of [
++      {Origin: "null", "Access-Control-Request-Method": "POST"},
++      {Origin: "null", "Access-Control-Request-Method": "DELETE"},
++      {Origin: "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "Range, Authorization"},
++      {Origin: "null", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "X-DSH-Desktop-Renderer"},
++      {Origin: "null", "Access-Control-Request-Method": "GET", "access-control-request-method": "HEAD"},
++    ]) {
++      await proxy.handlePaused(paused(resource, {method: "OPTIONS", headers}));
++      assert.equal(fulfilled(target).responseCode, 403);
++      assert.equal(fulfilled(target).responseHeaders.some(item => item.name.toLowerCase() === "access-control-allow-origin"), false);
++    }
++    assert.equal(calls, 0, "Sandbox rejection must happen before queueing or fetching any control/API payload");
++  } finally { await proxy.dispose(); }
++});
++
++test("foreign or ambiguous supplied origins fail closed while verified native APIs keep working", async () => {
++  const target = session("app://-/index.html");
++  const seen = [];
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async (_url, options) => {
++    seen.push(options);
++    return new Response('{"ok":true}', {headers: {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"}});
++  }});
++  const nativeRequest = headers => ({requestId: "native-origin", request: {url: `app://-/dsh/${token}/wallpaper-engine/settings`, method: "PATCH", headers: {"Content-Type": "application/json", ...headers}, postData: '{"blur":5}'}});
++  try {
++    for (const origin of ["https://foreign.invalid", "app://codex", "app://-/", config().origin, "", " null", "null, app://-", null, 0]) {
++      await proxy.handlePaused(nativeRequest({Origin: origin}));
++      assert.equal(fulfilled(target).responseCode, 403, String(origin));
++    }
++    await proxy.handlePaused(nativeRequest({Origin: "app://-", origin: "null"}));
++    assert.equal(fulfilled(target).responseCode, 403);
++    assert.equal(seen.length, 0);
++    for (const headers of [{}, {Origin: "app://-"}, {origin: "app://-"}]) {
++      await proxy.handlePaused(nativeRequest(headers));
++      assert.equal(fulfilled(target).responseCode, 200);
++      assert.equal(seen.at(-1).headers.Origin, config().origin);
++      assert.equal(seen.at(-1).body.toString(), '{"blur":5}');
++      assert.equal(fulfilled(target).responseHeaders.some(item => item.name.toLowerCase().startsWith("access-control-")), false);
++    }
++    assert.equal(seen.length, 3);
++  } finally { await proxy.dispose(); }
++});
++
++test("proxy diagnostics show upstream and CDP body stages without private URLs, paths or payloads", async () => {
++  const target = session();
++  const entries = [];
++  let failFetch = false;
++  const privateBody = '{"privateTitle":"never record this payload"}';
++  const proxy = await installDshProxy(target, config(), {onDiagnostic: entry => entries.push(entry), fetchImpl: async () => {
++    if (failFetch) throw Object.assign(new Error(`fetch ${config().origin}/dsh/${token}/settings?private=query failed for C:\\Users\\Private\\wallpaper`), {cause: {code: "ECONNREFUSED"}});
++    return new Response(privateBody, {headers: {"Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(privateBody))}});
++  }});
++  try {
++    await proxy.handlePaused({...paused("wallpaper-engine/settings"), frameId: "trusted-frame", networkId: "123.456"});
++    assert.deepEqual(entries.map(entry => entry.stage), ["request", "upstream-response", "fulfill", "fulfilled"]);
++    assert.equal(entries[0].origin, "absent"); assert.equal(entries[0].route, "settings");
++    assert.equal(entries[0].frameId, "trusted-frame"); assert.equal(entries[0].networkId, "123.456");
++    assert.equal(entries[1].status, 200); assert.equal(entries[1].declaredBytes, Buffer.byteLength(privateBody));
++    assert.equal(entries[3].bodyBytes, Buffer.byteLength(privateBody));
++    failFetch = true;
++    await proxy.handlePaused(paused("wallpaper-engine/inventory"));
++    const failure = entries.find(entry => entry.stage === "error");
++    assert.equal(failure.failedStage, "upstream-fetch"); assert.equal(failure.upstreamStatus, null);
++    assert.equal(failure.error.code, "ECONNREFUSED");
++    const serialized = JSON.stringify(entries);
++    for (const secret of [token, config().origin, "private=query", "Private", "privateTitle", "never record this payload"]) assert.equal(serialized.includes(secret), false, secret);
++    assert.match(failure.error.message, /\[url\]/); assert.match(failure.error.message, /\[path\]/);
++    const snapshot = proxy.diagnostics(); snapshot[0].route = "changed"; snapshot[2].headers.push("changed");
++    assert.equal(proxy.diagnostics()[0].route, "settings"); assert.equal(proxy.diagnostics()[2].headers.includes("changed"), false);
++  } finally { await proxy.dispose(); }
++});
++
++test("fulfill rejection records the CDP cause and the source body size; traces and sink are bounded", async () => {
++  const target = session();
++  const send = target.send;
++  let failFulfill = true;
++  target.send = async function(method, params) {
++    if (method === "Fetch.fulfillRequest" && failFulfill) throw Object.assign(new Error("Invalid parameters (-32602)"), {cdpCode: -32602});
++    return send.call(this, method, params);
++  };
++  const entries = [];
++  const proxy = await installDshProxy(target, config(), {onDiagnostic: entry => entries.push(entry), fetchImpl: async () => new Response("12345", {headers: {"Content-Type": "text/plain"}})});
++  try {
++    await proxy.handlePaused(paused("wallpaper-engine/settings"));
++    const failure = entries.find(entry => entry.stage === "error" && entry.failedStage === "fulfill");
++    assert.equal(failure.upstreamStatus, 200); assert.equal(failure.bodyBytes, 5); assert.equal(failure.error.code, -32602);
++    assert.equal(entries.some(entry => entry.failedStage === "error-fulfill"), true);
++    failFulfill = false;
++    for (let index = 0; index < 100; index++) await proxy.handlePaused(paused("wallpaper-engine/audio-spectrum"));
++    assert.equal(entries.filter(entry => entry.stage !== "error").length, 96);
++    failFulfill = true;
++    for (let index = 0; index < 20; index++) await proxy.handlePaused(paused("wallpaper-engine/settings"));
++    assert.equal(entries.filter(entry => entry.stage === "error").length, 32, "Later errors retain their own finite logging budget");
++    assert.equal(entries.length, 128); assert.equal(proxy.diagnostics().length, 128);
++  } finally { await proxy.dispose(); }
++});
++
++async function bindingFixture(fetchImpl, {autoAck = true} = {}) {
++  const target = session("app://-/index.html");
++  const replies = [];
++  let binding;
++  const send = target.send;
++  target.send = async function(method, params = {}) {
++    if (method === "Runtime.evaluate") {
++      vm.runInNewContext(params.expression, {CustomEvent: class {constructor(type, options) {this.type = type; this.detail = options.detail;}},
++        dispatchEvent(event) {
++          assert.equal(event.type, "__gpt_dsh_native_reply__"); replies.push(event.detail);
++          if (event.detail.phase === "chunk" && autoAck) queueMicrotask(() => { void binding.handleCalled({name: DSH_NATIVE_BINDING, executionContextId: 1, payload: JSON.stringify({op: "ack", id: event.detail.id, index: event.detail.index})}); });
++          return true;
++        }});
++    }
++    return send.call(this, method, params);
++  };
++  const proxy = await installDshProxy(target, config(), {fetchImpl});
++  binding = await installDshBinding(target, config(), {proxy});
++  const call = (payload, executionContextId = 1) => binding.handleCalled({name: DSH_NATIVE_BINDING, executionContextId, payload: JSON.stringify(payload)});
++  return {target, proxy, binding, replies, call, dispose: async () => {await binding.dispose(); await proxy.dispose();}};
++}
++
++test("Runtime binding uses the same authenticated policy and delivers acknowledged byte-exact 256KiB chunks", async () => {
++  const bytes = Buffer.alloc(256 * 1024 + 37, 255); bytes[0] = 0; bytes[1] = 128;
++  const requests = [];
++  const fixture = await bindingFixture(async (url, options) => {requests.push({url, ...options}); return new Response(bytes, {headers: {"Content-Type": "application/octet-stream"}});});
++  try {
++    const requestBody = Buffer.from([0, 255, 128]);
++    await fixture.call({op: "request", id: "read1", url: `app://-/dsh/${token}/wallpaper-engine/settings`, method: "POST", headers: [["Content-Type", "application/octet-stream"], ["Cookie", "private"], ["Authorization", "private"]], bodyBase64: requestBody.toString("base64")});
++    assert.equal(requests.length, 1); assert.equal(requests[0].headers.Origin, config().origin);
++    assert.equal(requests[0].headers.cookie, undefined); assert.equal(requests[0].headers.authorization, undefined);
++    assert.deepEqual(requests[0].body, requestBody);
++    assert.deepEqual(fixture.replies.map(reply => reply.phase), ["headers", "chunk", "chunk", "end"]);
++    assert.equal(fixture.replies[0].status, 200); assert.equal(fixture.replies[0].byteLength, bytes.length);
++    const chunks = fixture.replies.filter(reply => reply.phase === "chunk");
++    assert.equal(Buffer.from(chunks[0].chunkBase64, "base64").length, 256 * 1024);
++    assert.deepEqual(Buffer.concat(chunks.map(reply => Buffer.from(reply.chunkBase64, "base64"))), bytes);
++    assert.equal(fixture.binding.activeCount(), 0);
++    assert.equal(fixture.target.messages.some(message => message.method === "Fetch.fulfillRequest"), false, "Binding responses never depend on broken Owl URL interception");
++    assert.equal(fixture.target.messages.some(message => message.method === "Runtime.addBinding" && message.params.name === DSH_NATIVE_BINDING), true);
++  } finally {await fixture.dispose();}
++});
++
++test("Runtime binding rejects foreign/default-child/opaque contexts, unknown URLs and oversized bodies before fetch", async () => {
++  let requests = 0;
++  const fixture = await bindingFixture(async () => {requests++; return new Response("ok");});
++  try {
++    const request = {op: "request", id: "safe", url: `app://-/dsh/${token}/wallpaper-engine/settings`, method: "GET", headers: []};
++    fixture.target.executionContexts.set(2, {id: 2, origin: "null", auxData: {isDefault: true, frameId: "child"}});
++    fixture.target.executionContexts.set(3, {id: 3, origin: "app://-", auxData: {isDefault: false, frameId: "main-frame"}});
++    fixture.target.executionContexts.set(4, {id: 4, origin: "app://-", auxData: {isDefault: true, frameId: "child"}});
++    for (const contextId of [2, 3, 4, 999]) await fixture.call(request, contextId);
++    assert.equal(fixture.replies.length, 0); assert.equal(requests, 0);
++    for (const url of ["https://foreign.invalid/", `http://127.0.0.1:18765/dsh/${token}/wallpaper-engine/settings`, `app://-/dsh/${"b".repeat(64)}/wallpaper-engine/settings`, "app://-/index.html"]) {
++      await fixture.call({...request, url});
++      assert.equal(fixture.replies.at(-1).phase, "error");
++    }
++    await fixture.call({...request, method: "CONNECT"}); assert.equal(fixture.replies.at(-1).phase, "error");
++    await fixture.call({...request, bodyBase64: Buffer.alloc(1024 * 1024 + 1).toString("base64")}); assert.equal(fixture.replies.at(-1).phase, "error");
++    await fixture.call({...request, headers: [["Origin", "null"]]}); assert.equal(fixture.replies.findLast(reply => reply.phase === "headers").status, 403);
++    assert.equal(requests, 0);
++  } finally {await fixture.dispose();}
++});
++
++test("Runtime binding waits for the exact chunk acknowledgement and cancellation releases the transfer", async () => {
++  const fixture = await bindingFixture(async () => new Response(Buffer.alloc(256 * 1024 + 1)), {autoAck: false});
++  try {
++    const transfer = fixture.call({op: "request", id: "cancel1", url: `app://-/dsh/${token}/wallpaper-engine/settings`, method: "GET", headers: []});
++    for (let attempt = 0; attempt < 20 && !fixture.replies.some(reply => reply.phase === "chunk"); attempt++) await new Promise(resolve => setImmediate(resolve));
++    assert.equal(fixture.binding.activeCount(), 1);
++    assert.equal(fixture.replies.filter(reply => reply.phase === "chunk").length, 1);
++    await fixture.call({op: "ack", id: "cancel1", index: 9});
++    assert.equal(fixture.replies.filter(reply => reply.phase === "chunk").length, 1);
++    await fixture.call({op: "cancel", id: "cancel1"});
++    await transfer;
++    assert.equal(fixture.binding.activeCount(), 0);
++    assert.equal(fixture.replies.some(reply => reply.phase === "end"), false);
++  } finally {await fixture.dispose();}
++});
++
++test("Runtime binding queues initial module reads while executing at most four requests", async () => {
++  const gates = [];
++  let calls = 0, executing = 0, maximum = 0;
++  const fixture = await bindingFixture(async () => {
++    calls++; executing++; maximum = Math.max(maximum, executing);
++    await new Promise(resolve => gates.push(resolve)); executing--;
++    return new Response("ready");
++  });
++  try {
++    const requests = Array.from({length: 8}, (_, index) => fixture.call({op: "request", id: `module${index}`, url: `app://-/dsh/${token}/wallpaper-engine/settings`, method: "GET", headers: []}));
++    for (let attempt = 0; attempt < 20 && calls < 4; attempt++) await new Promise(resolve => setImmediate(resolve));
++    assert.equal(calls, 4); assert.equal(fixture.binding.activeCount(), 8);
++    for (const release of gates.splice(0)) release();
++    for (let attempt = 0; attempt < 20 && calls < 8; attempt++) await new Promise(resolve => setImmediate(resolve));
++    assert.equal(calls, 8); assert.equal(maximum, 4);
++    for (const release of gates.splice(0)) release();
++    await Promise.all(requests);
++    assert.equal(fixture.replies.filter(reply => reply.phase === "end").length, 8);
++    assert.equal(fixture.replies.some(reply => reply.phase === "error"), false);
++    assert.equal(fixture.binding.activeCount(), 0);
++  } finally {for (const release of gates) release(); await fixture.dispose();}
++});
++
++test("video ranges and request/response limits remain finite without truncating package bytes", async () => {
++  const requests = [];
++  let nextResponse = () => new Response(Buffer.from([1, 2, 3]), {status: 206, headers: {"Content-Type": "video/mp4", "Content-Range": "bytes 0-2/20000000"}});
++  const target = session();
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async (url, options) => { requests.push({url, ...options}); return nextResponse(); }});
++  try {
++    await proxy.handlePaused(paused("wallpaper-engine/media/file", {headers: {Range: "bytes=1024-"}}));
++    assert.equal(requests.at(-1).headers.range, `bytes=1024-${1024 + 4 * 1024 * 1024 - 1}`);
++    assert.equal(fulfilled(target).responseCode, 206);
++    const before = requests.length;
++    await proxy.handlePaused(paused("wallpaper-engine/settings", {method: "PUT", headers: {"Content-Type": "application/json"}, postData: "x".repeat(1024 * 1024 + 1)}));
++    assert.equal(fulfilled(target).responseCode, 413); assert.equal(requests.length, before);
++    await proxy.handlePaused(paused("wallpaper-engine/settings", {method: "CONNECT"})); assert.equal(fulfilled(target).responseCode, 405);
++    nextResponse = () => new Response("too large", {headers: {"Content-Type": "application/octet-stream", "Content-Length": String(32 * 1024 * 1024 + 1)}});
++    await proxy.handlePaused(paused("large.tex")); assert.equal(fulfilled(target).responseCode, 502);
++    const bytes = Buffer.from([0, 255, 5, 6]);
++    nextResponse = () => new Response(bytes, {headers: {"Content-Type": "application/octet-stream"}});
++    await proxy.handlePaused(paused("scene.pkg")); assert.deepEqual(fulfilled(target).bytes, bytes);
++    nextResponse = () => new Response(null, {headers: {"Content-Length": "123456789", "Content-Type": "video/mp4"}});
++    await proxy.handlePaused(paused("wallpaper-engine/media/file", {method: "HEAD"}));
++    assert.equal(fulfilled(target).responseHeaders.find(header => header.name === "Content-Length").value, "123456789");
++    assert.equal(fulfilled(target).bytes.length, 0);
++  } finally { await proxy.dispose(); }
++});
++
++test("single-token full package paths use the 512MiB package limit without resolving encoded paths", async () => {
++  const packagePath = "Z:\\does-not-exist\\Workshop\\scene.pkg";
++  const encoded = Buffer.from(packagePath).toString("base64url");
++  const resource = `wallpaper-engine/scene-files/${encoded}`;
++  const url = value => `app://codex/dsh/${token}/wallpaper-engine/scene-files/${value}`;
++  assert.equal(isDshPackageResource(url(encoded), config()), true);
++  assert.equal(isDshPackageResource(url(Buffer.from("../../unregistered/scene.PKG").toString("base64url")), config()), true, "Classification does not resolve a decoded path; original host registration remains authoritative");
++  assert.equal(isDshPackageResource(url(Buffer.from("Z:\\missing\\preview.png").toString("base64url")), config()), false);
++  assert.equal(isDshPackageResource(url(`${encoded}/project.json`), config()), false);
++  assert.throws(() => isDshPackageResource(url(encoded + "="), config()), /token/);
++  assert.throws(() => isDshPackageResource(url(Buffer.from([0xff, 0xfe]).toString("base64url")), config()), /token/);
++  assert.throws(() => isDshPackageResource(url(Buffer.from("Z:\\bad\0scene.pkg").toString("base64url")), config()), /token/);
++  const badBits = Buffer.from("x.pkg").toString("base64url");
++  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
++  const noncanonical = badBits.slice(0, -1) + alphabet[alphabet.indexOf(badBits.at(-1)) + 1];
++  assert.deepEqual(Buffer.from(noncanonical, "base64url"), Buffer.from(badBits, "base64url"));
++  assert.throws(() => isDshPackageResource(url(noncanonical), config()), /Noncanonical/);
++  let calls = 0, oversized = false;
++  const bytes = Buffer.alloc(32 * 1024 * 1024 + 17, 193); bytes[0] = 0; bytes[1] = 255;
++  const target = session();
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async () => {
++    calls++;
++    return oversized ? new Response("rejected", {headers: {"Content-Length": String(512 * 1024 * 1024 + 1)}})
++      : new Response(bytes, {headers: {"Content-Type": "application/octet-stream", "Content-Length": String(bytes.length)}});
++  }});
++  try {
++    await proxy.handlePaused(paused(resource));
++    assert.equal(fulfilled(target).responseCode, 200); assert.deepEqual(fulfilled(target).bytes, bytes);
++    oversized = true;
++    await proxy.handlePaused(paused(resource)); assert.equal(fulfilled(target).responseCode, 502);
++    const before = calls;
++    await proxy.handlePaused(paused(`wallpaper-engine/scene-files/${noncanonical}`));
++    assert.equal(fulfilled(target).responseCode, 502); assert.equal(calls, before, "Noncanonical tokens are rejected before upstream fetch");
++  } finally {await proxy.dispose();}
++});
++
++test("asset upload limits follow DSH routes and actual binary postDataEntries stay byte exact", async () => {
++  const url = route => `app://codex/dsh/${token}/wallpaper-engine/${route}`;
++  assert.equal(dshRequestBodyLimit(url("upload"), "POST", config()), 512 * 1024 * 1024);
++  assert.equal(dshRequestBodyLimit(url("mascot"), "POST", config()), 8 * 1024 * 1024);
++  assert.equal(dshRequestBodyLimit(url("avatar/user"), "POST", config()), 8 * 1024 * 1024);
++  assert.equal(dshRequestBodyLimit(url("custom-frame/123"), "POST", config()), 30 * 1024 * 1024);
++  assert.equal(dshRequestBodyLimit(url("glass-presets/import"), "POST", config()), 128 * 1024 + 3 * Math.ceil((8 * 1024 * 1024) / 3) * 4);
++  assert.equal(dshRequestBodyLimit(url("settings"), "POST", config()), 1024 * 1024);
++  const bodies = [];
++  const target = session();
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async (_url, options) => {
++    bodies.push(options.body); return new Response('{"ok":true}', {headers: {"Content-Type": "application/json"}});
++  }});
++  try {
++    const bytes = Buffer.alloc(2 * 1024 * 1024, 255); bytes[0] = 0; bytes[1] = 128; bytes[2] = 10;
++    await proxy.handlePaused(paused("wallpaper-engine/avatar/user", {method: "POST", headers: {"Content-Type": "image/png"}, postDataEntries: [{bytes: bytes.toString("base64")}]}));
++    assert.equal(fulfilled(target).responseCode, 200); assert.deepEqual(bodies.at(-1), bytes);
++    const before = bodies.length;
++    await proxy.handlePaused(paused("wallpaper-engine/upload", {method: "POST", headers: {"Content-Type": "video/mp4"}, hasPostData: true}));
++    assert.equal(fulfilled(target).responseCode, 422); assert.match(fulfilled(target).bytes.toString(), /native-upload-bytes-unavailable/);
++    await proxy.handlePaused(paused("wallpaper-engine/upload", {method: "POST", headers: {"Content-Type": "image/png"}, postData: "binary-as-text"}));
++    assert.equal(fulfilled(target).responseCode, 422); assert.equal(bodies.length, before);
++  } finally { await proxy.dispose(); }
++});
++
++test("large package requests serialize and disposal removes interception", async () => {
++  const pending = [];
++  let active = 0, maximum = 0;
++  const target = session();
++  const proxy = await installDshProxy(target, config(), {fetchImpl: async () => {
++    active += 1; maximum = Math.max(maximum, active);
++    await new Promise(resolve => pending.push(resolve)); active -= 1;
++    return new Response("pkg", {headers: {"Content-Type": "application/octet-stream"}});
++  }});
++  const encodedPackage = name => `wallpaper-engine/scene-files/${Buffer.from(`Z:\\unregistered\\${name}.pkg`).toString("base64url")}`;
++  const first = proxy.handlePaused(paused(encodedPackage("scene")));
++  const second = proxy.handlePaused({...paused(encodedPackage("other")), requestId: "request-2"});
++  await new Promise(resolve => setImmediate(resolve));
++  assert.equal(pending.length, 1); pending.shift()();
++  await first; await new Promise(resolve => setImmediate(resolve));
++  assert.equal(pending.length, 1); pending.shift()(); await second;
++  assert.equal(maximum, 1);
++  await proxy.dispose(); assert.equal(target.messages.at(-1).method, "Fetch.disable");
++  assert.equal(target.dreamSkinDshProxy, undefined);
++});
++
++test("native factory boots exclusively with app origin and never enables CSP bypass", async () => {
++  const target = session("app://-/index.html?initialRoute=/thread");
++  const source = "function(nativeOrigin){return {nativeOrigin};}";
++  await applyToSession(target, {payload: "old-renderer", revision: "revision-1", mediaType: "video", dshNative: {config: config(), source}});
++  assert.equal(target.dshNativeDesired, true);
++  assert.equal(target.evaluations.some(value => value === "old-renderer"), false);
++  assert.equal(target.evaluations.some(value => value.includes('(\"app://-\")')), true);
++  assert.equal(target.evaluations.some(value => value.includes("transportRevision")), true);
++  assert.equal(target.messages.some(value => value.method === "Page.setBypassCSP" && value.params.enabled), false);
++  await target.dreamSkinDshProxy.dispose();
++  await assert.rejects(applyToSession(session(), "payload-only"), /complete loaded/);
++});
++
++test("one-shot apply passes the complete loaded payload and does not steal native watcher Fetch", async () => {
++  const beforeExit = process.exitCode;
++  const beforeLog = console.log;
++  const target = session();
++  const loaded = {payload: "CANARY_RENDERER_PAYLOAD", revision: "r1", mediaType: "image", theme: {id: "fixture", name: "Fixture"}};
++  const dependencies = {connectTargets: async () => [{target: {id: "fixture"}, session: target, probe: {markers: {}}}], loadPayload: async () => loaded};
++  console.log = () => {};
++  try {
++    await runOneShot({mode: "once", port: 1, browserId: "fixture", timeoutMs: 50}, dependencies);
++    assert.equal(target.evaluations.includes("CANARY_RENDERER_PAYLOAD"), true, "The old string-only call evaluated undefined instead of the renderer");
++    assert.equal(process.exitCode, beforeExit);
++    const native = session(); loaded.dshNative = {config: config(), source: "FACTORY_MUST_REMAIN_ON_WATCHER"};
++    await runOneShot({mode: "once", port: 1, browserId: "fixture", timeoutMs: 50}, {...dependencies, connectTargets: async () => [{target: {id: "fixture"}, session: native, probe: {markers: {}}}]});
++    assert.equal(native.messages.some(value => value.method === "Fetch.enable"), false);
++    assert.equal(native.evaluations.some(value => value.includes("FACTORY_MUST_REMAIN_ON_WATCHER")), false);
++  } finally { console.log = beforeLog; process.exitCode = beforeExit; }
++});
++
++test("native verification requires real drawable readiness, a working stylesheet and the matching revision", async () => {
++  const marker = {ready: true, error: null, transportRevision: "r1", surfaceCount: 2, wallpaperPresent: true};
++  const style = {isConnected: true, sheet: {cssRules: [{}]}};
++  const target = session(); target.dshNativeDesired = true;
++  target.evaluate = async expression => vm.runInNewContext(expression, {
++    window: {__GPT_DSH_NATIVE_STATE__: marker}, innerWidth: 900, innerHeight: 700,
++    location: {protocol: "app:"}, document: {hidden: false, visibilityState: "visible", getElementById: () => style, querySelector: () => ({})},
++  });
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, true);
++  style.sheet = null; assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++  style.sheet = {cssRules: [{}]}; marker.ready = false; assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++  marker.ready = true; assert.equal((await verifySession(target, "fixture", null, "other")).pass, false);
++  const ownSheet = {cssRules: [{}]};
++  const adoptedStyleSheets = [];
++  style.sheet = null;
++  marker.stylesheetApplied = () => adoptedStyleSheets.includes(ownSheet) && ownSheet.cssRules.length > 0;
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++  adoptedStyleSheets.push({cssRules: [{}]});
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false, "An unrelated adopted sheet is not proof");
++  adoptedStyleSheets.push(ownSheet);
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, true, "The owned sheet is adopted and has actual rules");
++  ownSheet.cssRules.length = 0;
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++  ownSheet.cssRules.push({}); style.isConnected = false;
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++  style.isConnected = true;
++  marker.stylesheetApplied = () => ({applied: true});
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false, "A truthy object must not satisfy physical evidence");
++  marker.stylesheetApplied = () => "true";
++  assert.equal((await verifySession(target, "fixture", null, "r1")).pass, false);
++});
+diff --git a/windows/tests/scene-addon.test.mjs b/windows/tests/scene-addon.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/windows/tests/scene-addon.test.mjs
+@@ -0,0 +1,75 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import fs from "node:fs/promises";
++import path from "node:path";
++import os from "node:os";
++import { fileURLToPath } from "node:url";
++import { loadPayload, normalizeSceneAddon, readSceneAddon } from "../scripts/injector.mjs";
++
++const url = `http://127.0.0.1:18765/s/${"a".repeat(64)}/scene/${"b".repeat(24)}`;
++test("scene addon only accepts exact authenticated loopback frame URLs", () => {
++  assert.equal(normalizeSceneAddon({ enabled: true, url, name: "本地场景" }), url);
++  assert.equal(normalizeSceneAddon({ enabled: false }), null);
++  for (const value of [null, [], {}, { enabled: 1 }, { enabled: true, url, command: "x" },
++    { enabled: true, url, name: "x\n" }, { enabled: true, url: url + "?token=x" },
++    { enabled: true, url: url + "#fragment" }, { enabled: true, url: " " + url },
++    { enabled: true, url: url.replace("127.0.0.1", "localhost") },
++    { enabled: true, url: url.replace("127.0.0.1", "127.0.0.2") },
++    { enabled: true, url: url.replace("18765", "80") },
++    { enabled: true, url: url.replace("http:", "https:") },
++    { enabled: true, url: url.replace("/scene/", "/other/") },
++    { enabled: true, url: url.replace("a".repeat(64), "short") },
++    { enabled: true, url: url.replace("127.0.0.1", "user@127.0.0.1") },
++  ]) assert.throws(() => normalizeSceneAddon(value));
++});
++
++test("addon state changes invalidate watcher fingerprints without changing persisted theme schema", async () => {
++  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "dreamskin-scene-addon-"));
++  const originalLocal = process.env.LOCALAPPDATA;
++  process.env.LOCALAPPDATA = temporary;
++  const root = path.dirname(fileURLToPath(new URL("../assets/", import.meta.url)));
++  const themeDir = path.join(temporary, "theme");
++  const configDir = path.join(temporary, "GPTWallpaper");
++  const configFile = path.join(configDir, "scene.json");
++  try {
++    await fs.mkdir(themeDir); await fs.mkdir(configDir);
++    await fs.copyFile(path.join(root, "assets", "dream-reference.jpg"), path.join(themeDir, "poster.jpg"));
++    const themeText = JSON.stringify({ schemaVersion: 1, id: "scene-fixture", image: "poster.jpg" });
++    await fs.writeFile(path.join(themeDir, "theme.json"), themeText);
++    const original = await loadPayload(themeDir);
++    assert.equal(original.theme.sceneLiveUrl, undefined);
++    await fs.writeFile(configFile, JSON.stringify({ enabled: true, url }));
++    const first = await loadPayload(themeDir);
++    assert.equal(first.theme.sceneLiveUrl, url);
++    assert.notEqual(first.fingerprint, original.fingerprint);
++    assert.notEqual(first.sourceStamp, original.sourceStamp);
++    assert.notEqual(first.revision, original.revision);
++    const secondUrl = url.replace("b".repeat(24), "c".repeat(24));
++    const previousStat = await fs.stat(configFile);
++    await fs.writeFile(configFile, JSON.stringify({ enabled: true, url: secondUrl }));
++    await fs.utimes(configFile, previousStat.atime, previousStat.mtime);
++    const second = await loadPayload(themeDir);
++    assert.notEqual(second.fingerprint, first.fingerprint, "Same-sized changes must invalidate the payload even with restored mtime");
++    assert.notEqual(second.sourceStamp, first.sourceStamp);
++    assert.equal(await fs.readFile(path.join(themeDir, "theme.json"), "utf8"), themeText);
++    await fs.writeFile(configFile, JSON.stringify({ enabled: false }));
++    assert.equal((await loadPayload(themeDir)).theme.sceneLiveUrl, undefined);
++    await fs.writeFile(configFile, "{");
++    assert.equal((await readSceneAddon()).url, null);
++    await fs.writeFile(configFile, "x".repeat(8193));
++    assert.equal((await readSceneAddon()).url, null);
++    await fs.writeFile(configFile, JSON.stringify({ enabled: true, url }));
++    await fs.writeFile(path.join(themeDir, "theme.json"), JSON.stringify({
++      schemaVersion: 1, id: "legacy-stream-fixture", image: "poster.jpg",
++      media: { type: "scene", codec: "avc1.42c01f", streamUrl: "http://127.0.0.1:18766/1234567890abcdef1234567890abcdef/stream.mp4" },
++    }));
++    const legacy = await loadPayload(themeDir);
++    assert.equal(legacy.mediaType, "image");
++    assert.equal(legacy.mediaStreamUrl, null, "Iframe addon must not inherit legacy global CSP bypass");
++    assert.equal(legacy.theme.media.streamUrl, undefined);
++  } finally {
++    if (originalLocal === undefined) delete process.env.LOCALAPPDATA;
++    else process.env.LOCALAPPDATA = originalLocal;
++    await fs.rm(temporary, { recursive: true, force: true });
++  }
++});

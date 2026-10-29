@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "skin": {
+    "repository": "https://github.com/CCDawn/Codex-Dynamic-Skin.git",
+    "commit": "5a0e74043b63ed9518ab37cdcf6865340a57006c",
+    "version": "1.7.3"
+  },
+  "dsh": {
+    "repository": "https://github.com/elysia395/dsh-wallpaper-engine.git",
+    "commit": "7ba44b2424e55b70fe28fea753a7abf27ae7cdb3",
+    "version": "1.4.0",
+    "preparedFiles": {
+      "lib/client.js": "cd68269efec897036226e07833554c6bf80ac928c3c6cab2f0cdd67b9bf4c94d",
+      "packages/fonts/lib/client.fonts.js": "53bd43a0717b645fc12ada8c675f0bec19147a62e94359a466d4a655c6c81d9b",
+      "packages/fx/lib/client.fx.js": "1f660eb02759a7d6c25675276222a433e679cbec5ccc6a461171ad1e4ad0ce25",
+      "packages/parallax/lib/client.parallax.js": "ce3ab14b957bac475c9c61428091bc2f800dfd8bbf22a0d78e19200cca99a9b1",
+      "packages/pet-link/lib/client.pet-link.js": "ea928838cf278084cef3d9d56652d7be669f862ffb5da147cc83aee75dcd7f28",
+      "lib/media-origin.js": "703dcb5dbb5130f8ce0dc7fe0e305be6ac455ae084975449ecfac6e2a141d742",
+      "lib/webwallgl/renderer.js": "08ffabfa75c972f29c467796a6714679e6904871618464c8df4c1e9c1f8d9be8",
+      "lib/webwallgl/occlusion-bridge.js": "87033722bb8e18b9fcace4642bec649decb9e6b0ef5fad3f2ca847c42b5bcaf6",
+      "lib/settings-schema.js": "a572ff4776355f89ab0f650b2d0e50cdcbc4cd02e7bfdd5cd76b7823e7f92cf1",
+      "package.json": "678311c6a606bfe0b77b8830f8dfdf5d7aab5968977ef930eb795fdc2bb48a77",
+      "LICENSE": "a116f28b94e928c3b22acc3346cbd29b3cb2fddd68f73be5c9b93d7626f20cf6",
+      "runtime-deps/webwallgl/package.json": "0f5c66347c0a873e27b7d13364cfbaf98404efd1f9d2525af993f2ee76383a32",
+      "runtime-deps/webwallgl/LICENSE": "857432ca4f48930e6079aca25164c27b791576ee2a7d3e3c9d6a92a089fe4948",
+      "runtime-deps/webwallgl/webwallgl.mjs": "b8582c86221aa7698ca97e356a9b17f33aa3d3070a0721462132eba092b93fda",
+      "runtime-deps/webwallgl/webwallgl.global.min.js": "260729326fb2e2f3c595eef57de9a50cb7f7ac1d335ebd8a3539b46b53f0b05b"
+    }
+  },
+  "webwallgl": {
+    "url": "https://registry.npmjs.org/webwallgl/-/webwallgl-3.0.0.tgz",
+    "version": "3.0.0",
+    "integrity": "sha512-If5DUW3hHeWOyyhvswHkycWm0U5mWJUpKb4ws/J+jrwK3gUbmpoyyACfezKClrcpMB8u2UNyl/ni3M0Z2gjjww==",
+    "standaloneFiles": {
+      "LICENSE": "857432ca4f48930e6079aca25164c27b791576ee2a7d3e3c9d6a92a089fe4948",
+      "webwallgl.global.min.js": "2f86ab955f3377e2fa2cfd5ffa72f5813fe8f6e4a272295fed36f4c1e626b1e5"
+    }
+  },
+  "patches": {
+    "plugins/gpt-wallpaper/patches/codex-scene-addon.patch": "7c5783e661cb0a8bc281d501e8fa9afade91826444b97eda2efd773bbd6864a0",
+    "plugins/gpt-wallpaper/patches/dsh-codex-adapter.patch": "f567dc16e0812c95744bf6ec5e165bc1d76ea39fc20ad1189d5ada5679ae5ad2",
+    "plugins/gpt-wallpaper/patches/webwallgl-replacements.json": "a5c25e9f79d267ad2090979ac90e9e8bb58e7efecec808e4d30bd9a2284a9c51"
+  }
+}

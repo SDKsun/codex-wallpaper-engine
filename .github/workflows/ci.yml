@@ -1,0 +1,27 @@
+name: Source build and tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.15.0'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Prepare pinned dependencies and build manager
+        shell: pwsh
+        run: ./scripts/build-plugin.ps1 -NodeLicense ./plugins/gpt-wallpaper/NODE-LICENSE.txt
+      - name: Run isolated tests
+        run: npm test
+      - name: Check publication contents
+        run: npm run check:publication
