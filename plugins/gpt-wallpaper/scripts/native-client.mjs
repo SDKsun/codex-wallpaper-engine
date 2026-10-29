@@ -160,6 +160,17 @@ export function buildCodexGlassReflectionCss(selection = {}) {
   return rules.join('\n');
 }
 
+/** A continuous glass rim that preserves native shadows and layout sizing. */
+export function buildCodexGlassBorderCss(selection = {}) {
+  const scope='body[data-codex-we-native="on"][data-we-glass-page]';
+  const policy=selection.glassSurfacePolicy||{},targets=[];
+  if(policy.declared!=='native')targets.push(`${scope}[data-we-glass-chat] [data-codex-we-surface="composer"]`);
+  if(policy['settings-window']!=='native')targets.push(`${scope}[data-we-glass-window] #codex-we-native-settings`);
+  if(selection.sidebarGlass===true&&selection.sidebarFullClear!==true&&policy['right-sidebar']!=='native')targets.push(`${scope}[data-we-sidebar-glass] [data-codex-we-surface="right-sidebar"][data-summary-panel-variant="summary"]`);
+  if(!targets.length)return '';
+  return `${targets.join(',')}{outline:1px solid rgba(232,244,255,.26)!important;outline-offset:-1px!important}`;
+}
+
 /** KeyboardEvent.code bindings used by the original DSH shortcuts service. */
 export function normalizeShortcutBinding(value) {
   if(value===null||value==='')return null;
@@ -251,6 +262,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     const __compileFonts=${buildCodexTypographyCss.toString()};
     const __compileGlass=${buildCodexGlassCss.toString()};
     const __compileReflections=${buildCodexGlassReflectionCss.toString()};
+    const __compileGlassBorders=${buildCodexGlassBorderCss.toString()};
     const __compilePages=${buildCodexPageCss.toString()};
     const __pageAdapter=(${createNativePageAdapter.toString()})({document:__doc,native:__native});
     const __parseBinding=${normalizeShortcutBinding.toString()};
@@ -390,7 +402,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     function __syncNativeAdapters(){
       const selection=__mainClient?.selection||{};
       if(!__adapterStyle){__adapterStyle=__createPluginElement('style');__adapterStyle.id='codex-we-native-adapter-style';__doc.head.appendChild(__adapterStyle);}
-      const css=[__compileGlass(selection),__compilePages(selection),__compileReflections(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
+      const css=[__compileGlass(selection),__compilePages(selection),__compileReflections(selection),__compileGlassBorders(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
     }
     const __localeService = {getSnapshot:()=>({active:'zh'}),register:()=>()=>{},subscribe:()=>()=>{}};
     const __ctx = {
