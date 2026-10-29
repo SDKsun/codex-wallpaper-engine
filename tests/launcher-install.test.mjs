@@ -13,6 +13,48 @@ const installer=fileURLToPath(new URL('../plugins/gpt-wallpaper/scripts/install-
 const windows={skip:process.platform!=='win32',timeout:120000};
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const hash=value=>createHash('sha256').update(value).digest('hex');
+// An independent Unicode COM fixture writer. WSH can silently save Chinese
+// shortcut filenames under a different name on an English Windows runner.
+const unicodeShortcutFixture=String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
+public static class ShortcutFixture {
+  [ComImport, Guid("00021401-0000-0000-C000-000000000046")] private class ShellLink {}
+  [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  private interface Link {
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size, IntPtr data, uint flags);
+    void GetIDList(out IntPtr value);
+    void SetIDList(IntPtr value);
+    void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+    void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+    void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+    void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+    void GetHotkey(out short value);
+    void SetHotkey(short value);
+    void GetShowCmd(out int value);
+    void SetShowCmd(int value);
+    void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size, out int index);
+    void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string value, int index);
+    void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string value, uint reserved);
+    void Resolve(IntPtr window, uint flags);
+    void SetPath([MarshalAs(UnmanagedType.LPWStr)] string value);
+  }
+  public static void Create(string filename, string target, string arguments) {
+    object instance=new ShellLink();
+    try {
+      ((Link)instance).SetPath(target);
+      ((Link)instance).SetArguments(arguments);
+      ((IPersistFile)instance).Save(filename, true);
+    } finally { Marshal.FinalReleaseComObject(instance); }
+  }
+}
+'@
+`;
 
 async function fixture(t,{unicode=false}={}){
   const temporary=await fs.realpath(os.tmpdir());
@@ -21,7 +63,8 @@ async function fixture(t,{unicode=false}={}){
   // and identity so fixture deletion cannot affect the user's real pin.
   const appId='CodexWallpaperEngine.Test.'+randomUUID().replaceAll('-','');
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
-  const plugin=path.join(root,'构建 包'),state=path.join(root,unicode?'状态 🖼 مرح':'状态'),desktop=path.join(root,'桌面'),programs=path.join(root,'开始菜单'),taskbar=path.join(root,'任务栏');
+  const suffix=unicode?' 🖼 مرح':'';
+  const plugin=path.join(root,'构建 包'),state=path.join(root,'状态'+suffix),desktop=path.join(root,'桌面'+suffix),programs=path.join(root,'开始菜单'+suffix),taskbar=path.join(root,'任务栏'+suffix);
   for(const directory of [plugin,state,desktop,programs,taskbar])await fs.mkdir(directory,{recursive:true});
   const write=async(relative,text)=>{const file=path.join(plugin,relative);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,text);};
   await write('manager/CodexDreamSkinManager.exe','inert manager fixture; never executed');
@@ -111,14 +154,14 @@ test('launcher updates its own links and preserves a later user edit during unin
 });
 
 test('launcher only replaces an exact official link and restores its original bytes',windows,async t=>{
-  const f=await fixture(t);
+  const f=await fixture(t,{unicode:true});
   const officialRoot=path.join(f.root,'registered-store-package');
   await fs.mkdir(path.join(officialRoot,'app'),{recursive:true});
   const exe=path.join(officialRoot,'app/ChatGPT.exe');
   await fs.writeFile(exe,'inert official fixture; never executed');
   const officialLink=path.join(f.desktop,'Codex.lnk');
   const privateLink=path.join(f.programs,'ChatGPT.lnk');
-  await f.command(`$s=New-Object -ComObject WScript.Shell\n$l=$s.CreateShortcut(${quote(officialLink)});$l.TargetPath=${quote(exe)};$l.Save()\n$l=$s.CreateShortcut(${quote(privateLink)});$l.TargetPath=${quote(exe)};$l.Arguments='--private-custom-arguments';$l.Save()`);
+  await f.command(`${unicodeShortcutFixture}\n[ShortcutFixture]::Create(${quote(officialLink)},${quote(exe)},'')\n[ShortcutFixture]::Create(${quote(privateLink)},${quote(exe)},'--private-custom-arguments')`);
   const original=await fs.readFile(officialLink),custom=await fs.readFile(privateLink);
   const mock=`function global:Get-AppxPackage { [pscustomobject]@{SignatureKind='Store';PackageFamilyName='OpenAI.Codex_2p2nqsd0c76g0';InstallLocation=${quote(officialRoot)}} }`;
   await f.install('-ReplaceExisting',mock);
