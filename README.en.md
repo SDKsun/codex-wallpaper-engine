@@ -17,6 +17,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - The chat project summary card follows sidebar glass settings, with one background layer, readable sections and preserved scrolling.
 - Optional system audio spectrum and Now Playing through a pinned, checksum-verified official media helper.
 - Explicit first-run restart confirmation, pause and appearance restoration.
+- Restores the verified wallpaper window when multiple Codex instances exist; background output does not block the manager's startup result.
 
 ## Supported scope
 

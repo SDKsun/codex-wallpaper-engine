@@ -39,6 +39,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch does not apply.' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch failed.' }
 
 $windowsRoot = Join-Path $sourceRoot 'windows'
+foreach ($testName in @('managed-window-activation.tests.ps1','start-renderer-readiness.tests.ps1','start-verified-skin-preserved.tests.ps1')) {
+    & (Join-Path $windowsRoot "tests/$testName") -Root $windowsRoot
+    if (-not $?) { throw "Windows startup checks failed: $testName" }
+}
 foreach ($part in @('assets','scripts')) {
     $target = Join-Path $pluginRoot "engine/$part"
     New-Item -ItemType Directory -Path $target -Force | Out-Null
@@ -58,8 +62,17 @@ $frameworkNode.InnerText = 'net10.0-windows'
 $projectXml.Save($project)
 & dotnet publish $project -c Release -p:SelfContained=false -p:PublishSingleFile=false -p:PublishReadyToRun=false "-p:NodeExe=$NodeExe" "-p:NodeLicense=$NodeLicense" -o $managerRoot
 if ($LASTEXITCODE -ne 0) { throw 'Manager build failed.' }
-& (Join-Path $managerRoot 'CodexDreamSkinManager.exe') --self-test
-if ($LASTEXITCODE -ne 0) { throw 'Manager self-test failed.' }
+$selfTestRoot = Join-Path $buildRoot ('manager-self-test-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $selfTestRoot | Out-Null
+$previousStateOverride = $env:CODEX_DREAM_SKIN_LOCAL_APPDATA
+try {
+    $env:CODEX_DREAM_SKIN_LOCAL_APPDATA = $selfTestRoot
+    & (Join-Path $managerRoot 'CodexDreamSkinManager.exe') --self-test
+    if ($LASTEXITCODE -ne 0) { throw 'Manager self-test failed.' }
+} finally {
+    if ($null -eq $previousStateOverride) { Remove-Item Env:CODEX_DREAM_SKIN_LOCAL_APPDATA -ErrorAction SilentlyContinue }
+    else { $env:CODEX_DREAM_SKIN_LOCAL_APPDATA = $previousStateOverride }
+}
 
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repoRoot ('dist/build-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)) }
 $outputRoot = [IO.Path]::GetFullPath($OutputDirectory)
