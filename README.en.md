@@ -18,6 +18,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - Optional system audio spectrum and Now Playing through a pinned, checksum-verified official media helper.
 - Explicit first-run restart confirmation, pause and appearance restoration.
 - Restores the verified wallpaper window when multiple Codex instances exist; background output does not block the manager's startup result.
+- Installable desktop and Start menu launch entries restore the local resource service and saved appearance whenever Codex opens.
 
 ## Supported scope
 
@@ -42,6 +43,8 @@ npm test
 The output `dist/build-<timestamp>-<id>/` contains a complete `gpt-wallpaper` plugin and `.agents/plugins/marketplace.json`. Import this output using your client's supported local-plugin or local-marketplace flow. The source catalog alone does not contain the compiled manager.
 
 Open the wallpaper skill, select a local wallpaper, and confirm the manager's first-run restart. Click the mascot to open its library panel, then use its settings entry at the bottom. Right-click the mascot to open settings directly; `Ctrl+Alt+W` remains available. This repository provides a source-build process; upstream binaries are not presented as this project's release.
+
+For appearance restoration after exiting and reopening, run `.\scripts\install-launcher.ps1` from the **built** `gpt-wallpaper` directory. It copies the runtime into the user state directory and creates desktop and Start menu `Codex` shortcuts. Pin that shortcut to the taskbar and use these entries for daily launches; the manager need not remain open. Rerun the installer to update its shortcuts and matching taskbar entries. `-Action Uninstall` restores desktop and Start menu entries while retaining wallpaper settings; unpin the taskbar entry manually in Windows. Official Store application registrations and protocol links are unchanged and can still open an undecorated instance.
 
 ## Implementation and development
 

@@ -21,4 +21,6 @@ set_wallpaper 等只保存配置；watcher 尚未运行时不代表已经显示�
 
 商店版应用与独立进程统一使用用户目录下 `.codex/wallpaper-local` 保存 GPTWallpaper 和 CodexDreamSkin 状态；显式隔离目录仍可覆盖。管理器和本地服务使用独立进程代理，Codex 重启时会继续运行。初始化会恢复已启用的服务；不自动注册 Windows 启动项。
 
+退出后自动恢复装扮需使用已安装的 `Codex` 启动入口：完整构建插件中的 `scripts/install-launcher.ps1` 将运行文件安装到用户状态目录，并创建桌面和开始菜单快捷方式；将该快捷方式固定到任务栏。启动入口会先恢复资源服务，再加载已保存的装扮，无需管理器常驻。它不改写官方 AppX 应用注册和协议入口；状态显示 stale 时应核对实际入口，不把配置存在视为已显示。更新安装器会更新其管理的快捷方式及准确匹配的已有任务栏入口。
+
 非 OpenAI 官方插件。原生启动引擎使用 MIT 的 https://github.com/CCDawn/Codex-Dynamic-Skin v1.7.3 并带本地适配补丁；完整壁纸功能复用 https://github.com/elysia395/dsh-wallpaper-engine 的固定源码提交。Scene 渲染使用随包附带的 WebWallGL 3.0.0（MIT）；不同场景的效果兼容性需逐个实测。可选官方 DSH 桌宠联动需要对应宿主插件，不能把内置吉祥物称为已经接通官方桌宠。
