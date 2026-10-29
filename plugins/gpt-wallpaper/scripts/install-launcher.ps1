@@ -248,12 +248,71 @@ foreach ($package in @(Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction Silentl
     $icon = $executable + ',0'
   }
 }
-$shell = New-Object -ComObject WScript.Shell
 if (-not ('CodexWallpaper.ShortcutIdentity' -as [type])) { Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 namespace CodexWallpaper {
   public static class ShortcutIdentity {
+    // WScript.Shell uses the ANSI shell-link path setter on some Windows
+    // versions. IShellLinkW keeps user profile and installation paths Unicode.
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")] private class ShellLink {}
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface Link {
+      void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size, IntPtr data, uint flags);
+      void GetIDList(out IntPtr value);
+      void SetIDList(IntPtr value);
+      void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+      void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+      void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+      void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+      void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size);
+      void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+      void GetHotkey(out short value);
+      void SetHotkey(short value);
+      void GetShowCmd(out int value);
+      void SetShowCmd(int value);
+      void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int size, out int index);
+      void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string value, int index);
+      void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string value, uint reserved);
+      void Resolve(IntPtr window, uint flags);
+      void SetPath([MarshalAs(UnmanagedType.LPWStr)] string value);
+    }
+    public sealed class LinkInfo {
+      public string TargetPath { get; set; }
+      public string Arguments { get; set; }
+      public string WorkingDirectory { get; set; }
+    }
+    public static LinkInfo Read(string path) {
+      object instance = new ShellLink();
+      try {
+        ((System.Runtime.InteropServices.ComTypes.IPersistFile)instance).Load(path, 0);
+        Link link = (Link)instance;
+        var target = new StringBuilder(32768);
+        var arguments = new StringBuilder(32768);
+        var directory = new StringBuilder(32768);
+        link.GetPath(target, target.Capacity, IntPtr.Zero, 4);
+        link.GetArguments(arguments, arguments.Capacity);
+        link.GetWorkingDirectory(directory, directory.Capacity);
+        return new LinkInfo { TargetPath=target.ToString(), Arguments=arguments.ToString(), WorkingDirectory=directory.ToString() };
+      } finally { Marshal.FinalReleaseComObject(instance); }
+    }
+    public static void Create(string path, string target, string arguments, string directory, string description, string icon, string appId) {
+      object instance = new ShellLink();
+      try {
+        Link link = (Link)instance;
+        link.SetPath(target);
+        link.SetArguments(arguments);
+        link.SetWorkingDirectory(directory);
+        link.SetDescription(description);
+        int index = 0;
+        int comma = icon.LastIndexOf(',');
+        if (comma >= 0 && int.TryParse(icon.Substring(comma + 1), out index)) icon=icon.Substring(0, comma);
+        link.SetIconLocation(icon, index);
+        ((System.Runtime.InteropServices.ComTypes.IPersistFile)instance).Save(path, true);
+      } finally { Marshal.FinalReleaseComObject(instance); }
+      Set(path, appId);
+    }
     [StructLayout(LayoutKind.Sequential)] private struct Key { public Guid Format; public uint Id; }
     [StructLayout(LayoutKind.Explicit, Size=24)] private struct Value {
       [FieldOffset(0)] public ushort Type;
@@ -308,7 +367,7 @@ foreach ($folder in $folders) {
       $owned = @($previous.links | Where-Object { $_.path -ieq $candidate })
       if ($owned.Count -eq 1) { $planned += $candidate; continue }
       $null = Get-PlainFileBytes $candidate 65536
-      $existing = $shell.CreateShortcut($candidate)
+      $existing = [CodexWallpaper.ShortcutIdentity]::Read($candidate)
       $isOfficial = $false
       foreach ($identity in $official) {
         if ($existing.TargetPath -ieq $identity.executable -and [string]::IsNullOrWhiteSpace($existing.Arguments)) { $isOfficial = $true }
@@ -328,7 +387,7 @@ if ($previous -and (Test-Path -LiteralPath $TaskbarDirectory -PathType Container
     if ($candidate.Name -notmatch '^[^\\/:*?"<>|\x00-\x1f]{1,128}\.lnk$') { continue }
     try {
       $candidateBytes = Get-PlainFileBytes $candidate.FullName 65536
-      $existing = $shell.CreateShortcut($candidate.FullName)
+      $existing = [CodexWallpaper.ShortcutIdentity]::Read($candidate.FullName)
       if ($existing.TargetPath -ine $previousManager -or $existing.Arguments -cne '--launch' -or
           [CodexWallpaper.ShortcutIdentity]::Get($candidate.FullName) -cne $appId) { continue }
       $planned += $candidate.FullName
@@ -405,14 +464,8 @@ try {
   foreach ($record in $linkRecords) {
     $temporaryLink = Join-Path ([IO.Path]::GetDirectoryName($record.path)) ('.launcher-' + [Guid]::NewGuid().ToString('N') + '.lnk')
     try {
-      $shortcut = $shell.CreateShortcut($temporaryLink)
-      $shortcut.TargetPath = $managerPath
-      $shortcut.Arguments = '--launch'
-      $shortcut.WorkingDirectory = $destination
-      $shortcut.Description = '启动 Codex 并自动恢复已保存的壁纸与玻璃装扮'
-      $shortcut.IconLocation = $icon
-      $shortcut.Save()
-      [CodexWallpaper.ShortcutIdentity]::Set($temporaryLink, $appId)
+      [CodexWallpaper.ShortcutIdentity]::Create($temporaryLink, $managerPath, '--launch', $destination,
+        '启动 Codex 并自动恢复已保存的壁纸与玻璃装扮', $icon, $appId)
       $bytes = Get-PlainFileBytes $temporaryLink 65536
       $record.sha256 = Get-BytesHash $bytes
       Write-AtomicBytes $record.path $bytes $record.beforeHash

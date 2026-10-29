@@ -14,14 +14,14 @@ const windows={skip:process.platform!=='win32',timeout:120000};
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const hash=value=>createHash('sha256').update(value).digest('hex');
 
-async function fixture(t){
+async function fixture(t,{unicode=false}={}){
   const temporary=await fs.realpath(os.tmpdir());
   const root=await fs.mkdtemp(path.join(temporary,'codex-launcher-'));
   // Shell may associate links across directories by AppID. Isolate both paths
   // and identity so fixture deletion cannot affect the user's real pin.
   const appId='CodexWallpaperEngine.Test.'+randomUUID().replaceAll('-','');
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
-  const plugin=path.join(root,'构建 包'),state=path.join(root,'状态'),desktop=path.join(root,'桌面'),programs=path.join(root,'开始菜单'),taskbar=path.join(root,'任务栏');
+  const plugin=path.join(root,'构建 包'),state=path.join(root,unicode?'状态 🖼 مرح':'状态'),desktop=path.join(root,'桌面'),programs=path.join(root,'开始菜单'),taskbar=path.join(root,'任务栏');
   for(const directory of [plugin,state,desktop,programs,taskbar])await fs.mkdir(directory,{recursive:true});
   const write=async(relative,text)=>{const file=path.join(plugin,relative);await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,text);};
   await write('manager/CodexDreamSkinManager.exe','inert manager fixture; never executed');
@@ -50,8 +50,8 @@ async function fixture(t){
   return {root,plugin,state,desktop,programs,taskbar,appId,write,install,command,manifest};
 }
 
-test('launcher copies a stable content-addressed payload and creates correctly identified startup links',windows,async t=>{
-  const f=await fixture(t);
+test('launcher preserves non-ANSI Unicode targets in a stable payload and correctly identified startup links',windows,async t=>{
+  const f=await fixture(t,{unicode:true});
   const result=await f.install();
   assert.equal(result.ok,true);
   assert.match(result.contentId,/^[a-f0-9]{64}$/);
@@ -60,7 +60,7 @@ test('launcher copies a stable content-addressed payload and creates correctly i
   assert.equal(await fs.readFile(path.join(result.installedPath,'scripts/server.mjs'),'utf8'),'export const fixture=true;');
   for(const excluded of ['vendor/dsh/tests','vendor/dsh/node_modules','scripts/runtime.log','engine/state.json','private-settings.json'])await assert.rejects(fs.stat(path.join(result.installedPath,excluded)),{code:'ENOENT'});
   const link=path.join(f.desktop,'Codex.lnk');
-  const {stdout}=await f.command(`[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$s=New-Object -ComObject WScript.Shell\n$l=$s.CreateShortcut(${quote(link)})\n$a=New-Object -ComObject Shell.Application\n$i=$a.NameSpace(${quote(f.desktop)}).ParseName('Codex.lnk')\n@{target=$l.TargetPath;args=$l.Arguments;appId=$i.ExtendedProperty('System.AppUserModel.ID')} | ConvertTo-Json -Compress`);
+  const {stdout}=await f.command(`[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$a=New-Object -ComObject Shell.Application\n$i=$a.NameSpace(${quote(f.desktop)}).ParseName('Codex.lnk')\n@{target=$i.ExtendedProperty('System.Link.TargetParsingPath');args=$i.ExtendedProperty('System.Link.Arguments');appId=$i.ExtendedProperty('System.AppUserModel.ID')} | ConvertTo-Json -Compress`);
   const shortcut=JSON.parse(stdout.trim());
   assert.equal(shortcut.target,result.managerPath);
   assert.equal(shortcut.args,'--launch');
@@ -157,8 +157,8 @@ test('launcher rejects drive-relative paths and volume roots before writing inst
   await assert.rejects(fs.stat(path.join(f.state,'GPTWallpaper/launcher-install.json')),{code:'ENOENT'});
 });
 
-test('launcher adopts an independently pinned owned link on upgrade and leaves unpinning to Explorer',windows,async t=>{
-  const f=await fixture(t);
+test('launcher adopts and updates a Unicode pinned target while leaving unpinning to Explorer',windows,async t=>{
+  const f=await fixture(t,{unicode:true});
   const first=await f.install();
   assert.deepEqual(await fs.readdir(f.taskbar),[],'installation never creates a pin');
   const pin=path.join(f.taskbar,'Codex.lnk');
@@ -171,7 +171,7 @@ test('launcher adopts an independently pinned owned link on upgrade and leaves u
   const record=manifest.links.find(link=>link.path===pin);
   assert.equal(record.kind,'taskbar');
   assert.equal(record.originalBase64,null);
-  const {stdout}=await f.command(`[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$s=New-Object -ComObject WScript.Shell\n$l=$s.CreateShortcut(${quote(pin)})\n$a=New-Object -ComObject Shell.Application\n$i=$a.NameSpace(${quote(f.taskbar)}).ParseName('Codex.lnk')\n@{target=$l.TargetPath;args=$l.Arguments;appId=$i.ExtendedProperty('System.AppUserModel.ID')} | ConvertTo-Json -Compress`);
+  const {stdout}=await f.command(`[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n$a=New-Object -ComObject Shell.Application\n$i=$a.NameSpace(${quote(f.taskbar)}).ParseName('Codex.lnk')\n@{target=$i.ExtendedProperty('System.Link.TargetParsingPath');args=$i.ExtendedProperty('System.Link.Arguments');appId=$i.ExtendedProperty('System.AppUserModel.ID')} | ConvertTo-Json -Compress`);
   const link=JSON.parse(stdout.trim());
   assert.equal(link.target,second.managerPath);
   assert.equal(link.args,'--launch');
@@ -191,8 +191,18 @@ test('launcher upgrade leaves unknown taskbar links with mismatched identity or 
   const f=await fixture(t);
   const first=await f.install();
   const unknown=path.join(f.taskbar,'Codex.lnk'),custom=path.join(f.taskbar,'Codex custom.lnk');
-  await fs.copyFile(path.join(f.desktop,'Codex.lnk'),custom);
-  await f.command(`$s=New-Object -ComObject WScript.Shell\n$l=$s.CreateShortcut(${quote(unknown)});$l.TargetPath=${quote(first.managerPath)};$l.Arguments='--launch';$l.Save()\n$l=$s.CreateShortcut(${quote(custom)});$l.Arguments='--private-custom';$l.Save()`);
+  const source=await fs.readFile(path.join(f.desktop,'Codex.lnk'));
+  // Alter one same-width Unicode field in an inert link; avoid WSH's ANSI path
+  // roundtrip while keeping these deliberately mismatched link fixtures real.
+  function replaceText(from,to){
+    const before=Buffer.from(from,'utf16le'),after=Buffer.from(to,'utf16le');
+    assert.equal(before.length,after.length);
+    const offset=source.indexOf(before);assert.ok(offset>=0);
+    const changed=Buffer.from(source);after.copy(changed,offset);return changed;
+  }
+  const wrongId=f.appId.slice(0,-1)+(f.appId.endsWith('0')?'1':'0');
+  await fs.writeFile(unknown,replaceText(f.appId,wrongId));
+  await fs.writeFile(custom,replaceText('--launch','--custom'));
   const unknownBytes=await fs.readFile(unknown),customBytes=await fs.readFile(custom);
   await f.write('scripts/server.mjs','export const fixture="another upgrade";');
   await f.install();
