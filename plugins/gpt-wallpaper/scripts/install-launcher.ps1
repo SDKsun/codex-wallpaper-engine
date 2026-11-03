@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
   [ValidateSet('Install', 'Uninstall')][string]$Action = 'Install',
-  [string]$PluginRoot = (Split-Path -Parent $PSScriptRoot),
+  [string]$PluginRoot,
   [string]$StateRoot,
   [string]$DesktopDirectory = [Environment]::GetFolderPath('Desktop'),
   [string]$ProgramsDirectory = (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
@@ -12,6 +12,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $PluginRoot) { $PluginRoot = Split-Path -Parent $PSScriptRoot }
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $product = 'codex-wallpaper-launcher'

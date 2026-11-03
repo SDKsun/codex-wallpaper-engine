@@ -149,6 +149,30 @@ export function buildCodexGlassCss(selection = {}) {
   return rules.join('\n');
 }
 
+/** Native windows have no wallpaper outside their client viewport. Keep saved
+ * framing inside the available cover crop instead of exposing the window base.
+ * Parallax already supplies its own motion-sized overscan and remains upstream.
+ * At the default framing the rule does not match, retaining the untransformed
+ * media path rather than adding an always-on identity compositing layer. */
+export function buildCodexWallpaperCoverCss() {
+  const scope='body[data-codex-we-native="on"][data-we-wallpaper]:not([data-we-parallax="on"]):is([style*="--we-layer-scale:"],[style*="--we-layer-x:"],[style*="--we-layer-y:"]) .we-layer';
+  const scale='max(1,var(--we-layer-scale,1))';
+  const limit=`calc((${scale} - 1)*50%)`;
+  const offset=name=>`clamp(calc(-1*${limit}),var(${name},0px),${limit})`;
+  return `${scope}{scale:${scale}!important;translate:${offset('--we-layer-x')} ${offset('--we-layer-y')}!important}`;
+}
+
+/** Read-only geometry evidence, distinct from media decode/readiness. */
+export function inspectNativeWallpaperGeometry({document:doc,native}={}) {
+  const layer=doc?.getElementById?.('dsh-wallpaper-engine-layer');
+  if(!layer||typeof layer.getBoundingClientRect!=='function')return null;
+  const width=Number(doc.documentElement?.clientWidth||native?.innerWidth),height=Number(doc.documentElement?.clientHeight||native?.innerHeight);
+  const rect=layer.getBoundingClientRect();
+  if(!(width>0&&height>0)||!['left','top','right','bottom','width','height'].every(key=>Number.isFinite(rect[key])))return null;
+  const tolerance=1/Math.max(1,Number(native?.devicePixelRatio)||1);
+  return {viewport:{width,height},layer:{left:rect.left,top:rect.top,width:rect.width,height:rect.height},coversViewport:rect.width>0&&rect.height>0&&rect.left<=tolerance&&rect.top<=tolerance&&rect.right>=width-tolerance&&rect.bottom>=height-tolerance};
+}
+
 /** Static reflected light on the existing glass, without an overlay element. */
 export function buildCodexGlassReflectionCss(selection = {}) {
   const scope='body[data-codex-we-native="on"][data-we-glass-page]';
@@ -261,6 +285,8 @@ function bootstrapSource(options, effectiveBaseExpression) {
     };
     const __compileFonts=${buildCodexTypographyCss.toString()};
     const __compileGlass=${buildCodexGlassCss.toString()};
+    const __compileWallpaperCover=${buildCodexWallpaperCoverCss.toString()};
+    const __wallpaperGeometry=${inspectNativeWallpaperGeometry.toString()};
     const __compileReflections=${buildCodexGlassReflectionCss.toString()};
     const __compileGlassBorders=${buildCodexGlassBorderCss.toString()};
     const __compilePages=${buildCodexPageCss.toString()};
@@ -335,7 +361,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
       if(key==='addEventListener')return(type,fn,opts)=>__listen(__native,type,fn,opts);if(key==='removeEventListener')return(type,fn,opts)=>__unlisten(__native,type,fn,opts);
       if(Object.prototype.hasOwnProperty.call(__overlay,key))return __overlay[key];const value=__native[key];return __windowMethods.has(key)&&typeof value==='function'?value.bind(__native):value;
     },set(_,key,value){__overlay[key]=value;return true;},deleteProperty(_,key){delete __overlay[key];return true;},has(_,key){return key in __overlay||key in __native;}});
-    const __summary = () => ({ready:__state.ready,error:__state.error,revision:__state.revision,phase:__state.phase,settingsRegistered:__state.settingsRegistered,surfaceCount:__state.surfaceCount,wallpaperPresent:__state.wallpaperPresent,transport:__state.transport,fps:__state.fps,expectedType:__mainClient?.selection?.type||null,expectedId:__mainClient?.selection?.id||null,refreshError:__state.refreshError||null,stylesheetApplied:__stylesheetApplied(),nativeFontComponents:__nativeFontComponents().ids,terminalFontSupported:false,shortcuts:[...__shortcuts.keys()],modules:[...__modules.keys()],binding:__privateFetch?.snapshot(),sceneBridge:__sceneBridge?.snapshot(),resourceError:__state.resourceError||null,resourceFailure:__state.resourceFailure||null});
+    const __summary = () => ({ready:__state.ready,error:__state.error,revision:__state.revision,phase:__state.phase,settingsRegistered:__state.settingsRegistered,surfaceCount:__state.surfaceCount,wallpaperPresent:__state.wallpaperPresent,geometry:__state.geometry||null,transport:__state.transport,fps:__state.fps,expectedType:__mainClient?.selection?.type||null,expectedId:__mainClient?.selection?.id||null,refreshError:__state.refreshError||null,stylesheetApplied:__stylesheetApplied(),nativeFontComponents:__nativeFontComponents().ids,terminalFontSupported:false,shortcuts:[...__shortcuts.keys()],modules:[...__modules.keys()],binding:__privateFetch?.snapshot(),sceneBridge:__sceneBridge?.snapshot(),resourceError:__state.resourceError||null,resourceFailure:__state.resourceFailure||null});
     const __readNativeResource=${readNativeResource.toString()};
     function __resourceFailure(error,source,kind){const message=String(error?.message||error).slice(0,240);let route='invalid';try{route=new __native.URL(source,__effectiveBase+'/').pathname.split('/').map((part,index)=>index===2&&part.length===64?'<token>':part).join('/').slice(0,180);}catch{}__state.resourceError=message;__state.resourceFailure={kind,route,message};}
     function __resourceDrop(record){record.seq++;if(!record.entry)return;const entry=record.entry;record.entry=null;entry.refs--;if(entry.refs<=0){entry.controller.abort();if(entry.url)__native.URL.revokeObjectURL(entry.url);__resourceBytes-=entry.bytes||0;__resourceCache.delete(entry.source);}}
@@ -402,7 +428,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     function __syncNativeAdapters(){
       const selection=__mainClient?.selection||{};
       if(!__adapterStyle){__adapterStyle=__createPluginElement('style');__adapterStyle.id='codex-we-native-adapter-style';__doc.head.appendChild(__adapterStyle);}
-      const css=[__compileGlass(selection),__compilePages(selection),__compileReflections(selection),__compileGlassBorders(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
+      const css=[__compileWallpaperCover(),__compileGlass(selection),__compilePages(selection),__compileReflections(selection),__compileGlassBorders(selection),__compileFonts(selection)].join(String.fromCharCode(10));if(__adapterStyle.textContent!==css)__adapterStyle.textContent=css;
     }
     const __localeService = {getSnapshot:()=>({active:'zh'}),register:()=>()=>{},subscribe:()=>()=>{}};
     const __ctx = {
@@ -434,7 +460,7 @@ function bootstrapSource(options, effectiveBaseExpression) {
     }
     function __probe(){
       if(__disposed)return;__syncNativeAdapters();__syncPluginStyles();__surfaces();const layer=__doc.getElementById('dsh-wallpaper-engine-layer');
-      __state.wallpaperPresent=!!layer&&__doc.body.hasAttribute('data-we-wallpaper');__state.transport=null;__state.fps=null;let drawable=false;
+      __state.wallpaperPresent=!!layer&&__doc.body.hasAttribute('data-we-wallpaper');__state.geometry=__wallpaperGeometry({document:__doc,native:__native});__state.transport=null;__state.fps=null;let drawable=false;
       if(layer){const frame=layer.querySelector('iframe.we-live-iframe'),video=layer.querySelector('video.we-media'),image=layer.querySelector('img.we-media'),canvas=layer.querySelector('canvas.we-media--canvas');
         if(frame){__state.transport='scene';try{const statsFn=frame.contentWindow?.__wpStats?.frame,currentFn=frame.contentWindow?.__wp?.getState;const stats=statsFn?.(),current=currentFn?.();if((typeof statsFn==='function'||typeof currentFn==='function')&&__state.error==='Scene frame is not same-origin; native proxy is not active')__state.error=null;__state.fps=Number.isFinite(stats?.fps)?stats.fps:null;drawable=stats?.running===true&&stats.fps>0;if(current?.type==='web'){__state.transport='web';drawable=current.iframeLoaded===true&&!current.webError;}}catch{__state.error='Scene frame is not same-origin; native proxy is not active';}}
         else if(video){__state.transport='video';drawable=video.readyState>=2&&video.videoWidth>0;}

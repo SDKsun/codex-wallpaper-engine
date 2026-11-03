@@ -578,10 +578,10 @@ index 5552cbd..bb6987b 100644
  
 diff --git a/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
 new file mode 100644
-index 0000000..991f803
+index 0000000..b4a9c51
 --- /dev/null
 +++ b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,360 @@
 +using System.Diagnostics;
 +using System.Text;
 +using System.Text.Json;
@@ -597,7 +597,7 @@ index 0000000..991f803
 +  private const int OutputLimit = 64 * 1024;
 +  private static readonly TimeSpan LibraryTimeout = TimeSpan.FromSeconds(45);
 +
-+  public static int Run()
++  public static int Run(bool interactive = true)
 +  {
 +    Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 +    Application.EnableVisualStyles();
@@ -616,7 +616,7 @@ index 0000000..991f803
 +      runtime.EnsureExtracted();
 +      using var service = new DreamSkinService(runtime)
 +      {
-+        ConfirmCodexRestart = ConfirmRestart,
++        ConfirmCodexRestart = interactive ? ConfirmRestart : _ => false,
 +      };
 +      RunFlowAsync(
 +        () => EnsureLibraryAsync(runtime),
@@ -638,9 +638,12 @@ index 0000000..991f803
 +    catch (Exception exception)
 +    {
 +      WriteFailure(exception);
-+      MessageBox.Show(
-+        "无法启动带装扮的 Codex：" + exception.Message,
-+        ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
++      // A background automatic launch must finish with its real exit code;
++      // waiting for an invisible error dialog strands the assistant for minutes.
++      if (interactive)
++        MessageBox.Show(
++          "装扮启动未完成。请查看壁纸诊断日志中的详细原因。",
++          ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
 +      return 1;
 +    }
 +    finally
@@ -1030,6 +1033,29 @@ index 842a3eb..6e1378f 100644
    public async Task<bool> RestoreActiveSceneAsync(CancellationToken cancellationToken = default)
    {
      var scenePath = await GetActiveScenePathAsync(cancellationToken);
+diff --git a/windows/app/CodexDreamSkin.Manager/MainForm.cs b/windows/app/CodexDreamSkin.Manager/MainForm.cs
+index 07adc7d..47b7791 100644
+--- a/windows/app/CodexDreamSkin.Manager/MainForm.cs
++++ b/windows/app/CodexDreamSkin.Manager/MainForm.cs
+@@ -62,6 +62,7 @@ internal sealed class MainForm : Form
+   private bool _allowExit;
+   private bool _initializing = true;
+   private bool _pauseRequested;
++  private bool _resourcesDisposed;
+ 
+   public MainForm(DreamSkinService service, SettingsStore settingsStore, bool minimized)
+   {
+@@ -121,8 +122,9 @@ internal sealed class MainForm : Form
+ 
+   protected override void Dispose(bool disposing)
+   {
+-    if (disposing)
++    if (disposing && !_resourcesDisposed)
+     {
++      _resourcesDisposed = true;
+       _lifetime.Cancel();
+       _libraryLoad?.Cancel();
+       _statusTimer.Dispose();
 diff --git a/windows/app/CodexDreamSkin.Manager/Models.cs b/windows/app/CodexDreamSkin.Manager/Models.cs
 index 1abd8d7..aaa3f6e 100644
 --- a/windows/app/CodexDreamSkin.Manager/Models.cs
@@ -1226,7 +1252,7 @@ index 55f8d61..ca24103 100644
    }
  }
 diff --git a/windows/app/CodexDreamSkin.Manager/Program.cs b/windows/app/CodexDreamSkin.Manager/Program.cs
-index af8029e..9b98c11 100644
+index af8029e..bfcc9aa 100644
 --- a/windows/app/CodexDreamSkin.Manager/Program.cs
 +++ b/windows/app/CodexDreamSkin.Manager/Program.cs
 @@ -5,14 +5,35 @@ namespace CodexDreamSkin.Manager;
@@ -1251,7 +1277,7 @@ index af8029e..9b98c11 100644
 +    }
 +    if (args.Contains("--launch", StringComparer.OrdinalIgnoreCase))
 +    {
-+      return CodexLauncher.Run();
++      return CodexLauncher.Run(interactive: !args.Contains("--non-interactive", StringComparer.OrdinalIgnoreCase));
 +    }
 +
      using var mutex = new Mutex(true, MutexName, out var createdNew);
@@ -1462,10 +1488,10 @@ index ca278bf..aa41222 100644
      foreach (var relativePath in ResourceMap.Values)
 diff --git a/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
 new file mode 100644
-index 0000000..a1ab24d
+index 0000000..7b96646
 --- /dev/null
 +++ b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
-@@ -0,0 +1,694 @@
+@@ -0,0 +1,779 @@
 +using System.Diagnostics;
 +using System.Globalization;
 +using System.Text;
@@ -1486,7 +1512,7 @@ index 0000000..a1ab24d
 +  {
 +    public string Key => ProcessId.ToString(CultureInfo.InvariantCulture) + ":" + StartedAt.ToString("O");
 +  }
-+  private sealed record Snapshot(bool OperationBusy, IReadOnlyList<Root> Roots);
++  private sealed record Snapshot(bool OperationBusy, IReadOnlyList<Root> Roots, int RegisteredProcessCount = 0);
 +
 +  public static int Run()
 +  {
@@ -1599,6 +1625,7 @@ index 0000000..a1ab24d
 +        if (_resources is null || !_resources.IsCompleted) return;
 +        await _resources;
 +        _lifetime.Token.ThrowIfCancellationRequested();
++        _failures = 0;
 +        var candidate = _controller.Select(snapshot, DateTimeOffset.UtcNow);
 +        if (candidate is null) return;
 +        var current = CurrentSettings();
@@ -1613,13 +1640,36 @@ index 0000000..a1ab24d
 +        var response = await InvokeBridgeAsync(new[] { "-Action", "Takeover",
 +          "-ExpectedProcessId", candidate.ProcessId.ToString(CultureInfo.InvariantCulture),
 +          "-ExpectedStartedAt", candidate.StartedAt.UtcDateTime.ToString("O") },
-+          TimeSpan.FromSeconds(20), includeLifetime: false);
-+        if (!ReadTakeover(response, candidate, out var reasonCode))
++          TimeSpan.FromSeconds(35), includeLifetime: false);
++        if (!ReadTakeover(response, candidate, out var reasonCode, out var closeRequested, out var windowRestored))
 +        {
-+          Report("takeover_" + reasonCode, "本次自动接入未完成，请重新打开 Codex 或查看助手状态。");
-+          return;
++          if (_controller.Retry(candidate, reasonCode, closeRequested, DateTimeOffset.UtcNow))
++          {
++            Journal("takeover_retry_" + reasonCode);
++            WriteStatus("watching");
++            return;
++          }
++          if (!closeRequested || windowRestored)
++          {
++            Report("takeover_" + reasonCode, windowRestored
++              ? "本次自动接入未完成，已恢复原 Codex 窗口。"
++              : "本次自动接入未完成，原 Codex 会话已保留。");
++            return;
++          }
++          // WM_CLOSE can finish successfully while a later tree check races.
++          // Recover only when every registered application process is gone;
++          // roots alone exclude renderer/utility orphans. The launcher repeats
++          // its own strict preflight and never receives RestartExisting here.
++          var recovery = await ReadSnapshotAsync();
++          if (recovery.OperationBusy || recovery.RegisteredProcessCount != 0 || recovery.Roots.Count != 0)
++          {
++            Report("takeover_" + reasonCode,
++              "自动接入已停止，仍在运行的 Codex 进程已保留；请从原图标恢复窗口。");
++            return;
++          }
++          Journal("takeover_recovered_after_exit");
 +        }
-+        Journal("takeover_closed_exact_root");
++        else Journal("takeover_closed_exact_root");
 +        // Pause/uninstall revokes consent immediately, even if the narrowly
 +        // scoped close already completed. Do not start another application
 +        // after revocation; the user can reopen Codex normally in that race.
@@ -1632,6 +1682,8 @@ index 0000000..a1ab24d
 +        }
 +        var child = StartLauncher();
 +        WriteStatus("launching");
++        _tray.Text = Caption + "：正在启动";
++        _tray.ShowBalloonTip(3000, Caption, "正在重新打开 Codex 并恢复已保存的装扮。", ToolTipIcon.Info);
 +        _takeoverInFlight = false;
 +        if (_exitRequested) { child.Dispose(); ExitThread(); return; }
 +        using (child)
@@ -1647,7 +1699,11 @@ index 0000000..a1ab24d
 +          if (child.ExitCode != 0)
 +          {
 +            _lastLauncherExitCode = child.ExitCode;
-+            Suppress("launch_failed", "自动装扮启动未完成，已暂停后续接管，请打开壁纸设置查看。");
++            // This identity has already been attempted. Preserve the error,
++            // but keep watching later user launches instead of silently
++            // persisting a global pause after one transient command failure.
++            Report("launch_failed", "本次自动装扮未完成。助手会等待下一次正常启动，详细原因见壁纸诊断。");
++            _nextProbe = DateTimeOffset.UtcNow.AddSeconds(2);
 +            return;
 +          }
 +          _lastLauncherExitCode = 0;
@@ -1662,8 +1718,12 @@ index 0000000..a1ab24d
 +      catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
 +      catch
 +      {
++        // A failed warm-up is not a permanently poisoned task. Retry the
++        // read-only resource preflight with bounded backoff; no process is
++        // closed until a later warm-up completes successfully.
++        if (_resources?.IsFaulted == true) { _ = _resources.Exception; _resources = null; }
 +        _failures++;
-+        _nextProbe = DateTimeOffset.UtcNow.AddSeconds(15);
++        _nextProbe = DateTimeOffset.UtcNow + RetryDelay(_failures);
 +        Report("assistant_operation_failed", "自动装扮暂时无法完成，请打开壁纸设置查看。");
 +        if (_failures >= 3) Suppress("assistant_paused_after_errors", "自动装扮已因连续错误暂停，请从托盘恢复。");
 +      }
@@ -1697,6 +1757,7 @@ index 0000000..a1ab24d
 +      var info = new ProcessStartInfo { FileName = _launcher, UseShellExecute = false,
 +        CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(_launcher)! };
 +      info.ArgumentList.Add("--launch");
++      info.ArgumentList.Add("--non-interactive");
 +      info.Environment["LOCALAPPDATA"] = ManagerLocalData.Root;
 +      info.Environment["CODEX_DREAM_SKIN_LOCAL_APPDATA"] = ManagerLocalData.Root;
 +      return Process.Start(info) ?? throw new InvalidOperationException("Launcher did not start.");
@@ -1857,9 +1918,14 @@ index 0000000..a1ab24d
 +    }
 +  }
 +
++  private static TimeSpan RetryDelay(int failures) =>
++    TimeSpan.FromSeconds(15 * (1 << Math.Clamp(failures - 1, 0, 2)));
++
 +  private sealed class Controller
 +  {
 +    private readonly HashSet<string> _attempted = new(StringComparer.Ordinal);
++    private readonly Dictionary<string, int> _attemptCounts = new(StringComparer.Ordinal);
++    private readonly Dictionary<string, DateTimeOffset> _retryAfter = new(StringComparer.Ordinal);
 +    private readonly HashSet<string> _observedExclusions = new(StringComparer.Ordinal);
 +    private DateTimeOffset? _notBefore;
 +
@@ -1885,14 +1951,31 @@ index 0000000..a1ab24d
 +      {
 +        if (root.Kind != "normal" || !root.PlainLaunch || !root.VisibleWindow ||
 +            !Fresh(root, now) || (_notBefore.HasValue && root.StartedAt <= _notBefore.Value) ||
-+            _attempted.Contains(root.Key)) continue;
++            _attempted.Contains(root.Key) ||
++            (_retryAfter.TryGetValue(root.Key, out var retryAt) && now < retryAt)) continue;
 +        if (snapshot.Roots.Any(other => other.Key != root.Key && other.Kind is "normal" or "unknown"))
 +          continue;
 +        return root;
 +      }
 +      return null;
 +    }
-+    public void Attempt(Root root) => _attempted.Add(root.Key);
++    public void Attempt(Root root)
++    {
++      _attempted.Add(root.Key);
++      _attemptCounts[root.Key] = _attemptCounts.GetValueOrDefault(root.Key) + 1;
++      _retryAfter.Remove(root.Key);
++    }
++    public bool Retry(Root root, string reason, bool closeRequested, DateTimeOffset now)
++    {
++      // Retry only a refusal that happened before any close. An admitted
++      // process retains the original 15-second window and three-attempt cap.
++      if (closeRequested || !Fresh(root, now) ||
++          reason is not ("operation_busy" or "not_visible" or "tree_changed" or "close_refused") ||
++          _attemptCounts.GetValueOrDefault(root.Key) is not (> 0 and < 3)) return false;
++      _attempted.Remove(root.Key);
++      _retryAfter[root.Key] = now.AddSeconds(1);
++      return true;
++    }
 +    public void OnlyFutureLaunches(DateTimeOffset after) => _notBefore = after;
 +    public void Ignore(Snapshot snapshot) { foreach (var root in snapshot.Roots) _attempted.Add(root.Key); }
 +    private static bool Fresh(Root root, DateTimeOffset now) => root.AgeSeconds <= 15 &&
@@ -1921,7 +2004,7 @@ index 0000000..a1ab24d
 +    if (Encoding.UTF8.GetByteCount(json) > MaximumJsonBytes) throw new JsonException();
 +    using var document = JsonDocument.Parse(json.TrimStart('\uFEFF'), new JsonDocumentOptions { MaxDepth = 5 });
 +    var root = document.RootElement;
-+    Fields(root, "schema", "operationBusy", "roots");
++    Fields(root, "schema", "operationBusy", "registeredProcessCount", "roots");
 +    if (root.GetProperty("schema").GetInt32() != 1) throw new JsonException();
 +    var busy = Boolean(root, "operationBusy");
 +    var array = root.GetProperty("roots");
@@ -1938,29 +2021,38 @@ index 0000000..a1ab24d
 +          !double.IsFinite(age) || age < 0) throw new JsonException();
 +      processes.Add(new Root(id, StartTime(item), kind, age, Boolean(item, "plainLaunch"), Boolean(item, "visibleWindow")));
 +    }
-+    return new Snapshot(busy, processes);
++    var registeredCount = root.GetProperty("registeredProcessCount").GetInt32();
++    if (registeredCount < processes.Count || registeredCount > 8192) throw new JsonException();
++    return new Snapshot(busy, processes, registeredCount);
 +  }
 +
-+  private static bool ReadTakeover(string json, Root expected, out string reason)
++  private static bool ReadTakeover(string json, Root expected, out string reason,
++    out bool closeRequested, out bool windowRestored)
 +  {
 +    reason = "rejected";
++    closeRequested = false; windowRestored = false;
 +    if (Encoding.UTF8.GetByteCount(json) > 8192) throw new JsonException();
 +    using var document = JsonDocument.Parse(json.TrimStart('\uFEFF'), new JsonDocumentOptions { MaxDepth = 3 });
 +    var root = document.RootElement;
 +    if (root.TryGetProperty("reason", out var code))
 +    {
-+      Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "reason");
++      Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "reason", "closeRequested", "windowRestored");
 +      if (root.GetProperty("schema").GetInt32() != 1 || Boolean(root, "closed") || Boolean(root, "takenOver"))
 +        throw new JsonException();
 +      if (root.GetProperty("processId").GetInt32() != expected.ProcessId || StartTime(root) != expected.StartedAt)
 +        throw new JsonException();
 +      reason = code.GetString() ?? "rejected";
 +      if (!Regex.IsMatch(reason, @"\A[a-z0-9_]{1,64}\z")) throw new JsonException();
++      closeRequested = Boolean(root, "closeRequested");
++      windowRestored = Boolean(root, "windowRestored");
++      if (windowRestored && !closeRequested) throw new JsonException();
 +      return false;
 +    }
-+    Fields(root, "schema", "closed", "takenOver", "processId", "startedAt");
++    Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "closeRequested", "windowRestored");
++    closeRequested = Boolean(root, "closeRequested");
++    windowRestored = Boolean(root, "windowRestored");
 +    return root.GetProperty("schema").GetInt32() == 1 && Boolean(root, "closed") && Boolean(root, "takenOver") &&
-+      root.GetProperty("processId").GetInt32() == expected.ProcessId && StartTime(root) == expected.StartedAt;
++      closeRequested && !windowRestored && root.GetProperty("processId").GetInt32() == expected.ProcessId && StartTime(root) == expected.StartedAt;
 +  }
 +
 +  private static Settings ReadSettings(string file, string expectedLauncher)
@@ -2077,6 +2169,8 @@ index 0000000..a1ab24d
 +    try
 +    {
 +      var now = DateTimeOffset.UtcNow;
++      if (RetryDelay(1).TotalSeconds != 15 || RetryDelay(2).TotalSeconds != 30 ||
++          RetryDelay(3).TotalSeconds != 60 || RetryDelay(int.MaxValue).TotalSeconds != 60) return false;
 +      var fresh = new Root(1001, now.AddSeconds(-1), "normal", 1, true, true);
 +      var controller = new Controller();
 +      if (controller.Select(new(false, new[] { fresh }), now) != fresh) return false;
@@ -2093,26 +2187,43 @@ index 0000000..a1ab24d
 +      controller.Attempt(fresh);
 +      if (controller.Select(new(false, new[] { fresh }), now) is not null ||
 +          controller.Select(new(false, new[] { fresh with { StartedAt = now.AddMilliseconds(-100) } }), now) is null) return false;
++      var retrying = new Controller();
++      retrying.Attempt(fresh);
++      if (retrying.Retry(fresh, "tree_changed", true, now) ||
++          retrying.Retry(fresh, "identity_changed", false, now) ||
++          !retrying.Retry(fresh, "tree_changed", false, now) ||
++          retrying.Select(new(false, new[] { fresh }), now) is not null ||
++          retrying.Select(new(false, new[] { fresh }), now.AddSeconds(1)) != fresh) return false;
++      retrying.Attempt(fresh);
++      if (!retrying.Retry(fresh, "operation_busy", false, now.AddSeconds(1))) return false;
++      retrying.Attempt(fresh);
++      if (retrying.Retry(fresh, "tree_changed", false, now.AddSeconds(2))) return false;
++      var expiredRetry = new Controller(); expiredRetry.Attempt(fresh);
++      if (expiredRetry.Retry(fresh, "tree_changed", false, now.AddSeconds(16))) return false;
 +      var resumed = new Controller();
 +      resumed.OnlyFutureLaunches(now);
 +      if (resumed.Select(new(false, new[] { fresh }), now) is not null ||
 +          resumed.Select(new(false, new[] { fresh with { StartedAt = now.AddSeconds(1) } }), now.AddSeconds(2)) is null) return false;
 +
-+      var snapshotJson = JsonSerializer.Serialize(new { schema = 1, operationBusy = false,
++      var snapshotJson = JsonSerializer.Serialize(new { schema = 1, operationBusy = false, registeredProcessCount = 2,
 +        roots = new[] { new { processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"),
 +          kind = "normal", ageSeconds = 1, plainLaunch = true, visibleWindow = true } } });
-+      if (ParseSnapshot(snapshotJson).Roots.Count != 1) return false;
++      if (ParseSnapshot(snapshotJson).Roots.Count != 1 || ParseSnapshot(snapshotJson).RegisteredProcessCount != 2) return false;
 +      foreach (var invalid in new[] { "{}", snapshotJson.Replace("\"schema\":1", "\"schema\":1,\"schema\":1"),
 +        snapshotJson.Replace("\"visibleWindow\":true", "\"visibleWindow\":\"yes\""),
-+        snapshotJson.Replace("\"normal\"", "\"untrusted\""), new string('x', MaximumJsonBytes + 1) })
++        snapshotJson.Replace("\"normal\"", "\"untrusted\""),
++        snapshotJson.Replace("\"registeredProcessCount\":2", "\"registeredProcessCount\":0"),
++        new string('x', MaximumJsonBytes + 1) })
 +      { try { ParseSnapshot(invalid); return false; } catch { } }
 +      var success = JsonSerializer.Serialize(new { schema = 1, closed = true, takenOver = true,
-+        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O") });
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), closeRequested = true, windowRestored = false });
 +      if (!Regex.IsMatch(fresh.StartedAt.UtcDateTime.ToString("O"), @"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z\z")) return false;
 +      var refused = JsonSerializer.Serialize(new { schema = 1, closed = false, takenOver = false,
-+        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), reason = "identity_changed" });
-+      if (!ReadTakeover(success, fresh, out _) || ReadTakeover(success, other, out _) ||
-+          ReadTakeover(refused, fresh, out _)) return false;
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), reason = "identity_changed", closeRequested = false, windowRestored = false });
++      if (!ReadTakeover(success, fresh, out _, out var closedRequest, out _) || !closedRequest ||
++          ReadTakeover(success, other, out _, out _, out _) ||
++          ReadTakeover(refused, fresh, out _, out _, out _)) return false;
++      try { ReadTakeover(refused.Replace("\"windowRestored\":false", "\"windowRestored\":true"), fresh, out _, out _, out _); return false; } catch (JsonException) { }
 +
 +      fixture = Path.Combine(Path.GetTempPath(), "codex-assistant-test-" + Guid.NewGuid().ToString("N"));
 +      Directory.CreateDirectory(fixture);
@@ -2669,11 +2780,58 @@ index 258d152..e7bac71 100644
    };
    if (typeof document.addEventListener === "function") {
 diff --git a/windows/scripts/common-windows.ps1 b/windows/scripts/common-windows.ps1
-index d66bc51..21fd3eb 100644
+index d66bc51..329107c 100644
 --- a/windows/scripts/common-windows.ps1
 +++ b/windows/scripts/common-windows.ps1
-@@ -1043,7 +1043,10 @@ function Start-DreamSkinCodexForDebugging {
+@@ -704,7 +704,12 @@ function Invoke-DreamSkinNative {
+     }
+     $exitCode = $LASTEXITCODE
+     $output = @($nativeOutput | ForEach-Object { "$_" })
+-    return [pscustomobject]@{ Output = $output; ExitCode = $exitCode }
++    $stdout=@($nativeOutput|Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }|ForEach-Object { "$_" })
++    $stderr=@($nativeOutput|Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }|ForEach-Object { "$_" })
++    # Keep merged diagnostics for logs, but JSON consumers must use stdout.
++    # In Windows PowerShell 5.1 redirected stderr retains ErrorRecord identity
++    # until it is stringified; converting everything first loses this boundary.
++    return [pscustomobject]@{ Output = $output; StandardOutput=$stdout; StandardError=$stderr; ExitCode = $exitCode }
+   } finally {
+     $ErrorActionPreference = $previousPreference
    }
+@@ -989,7 +994,7 @@ function Start-DreamSkinCodexDirect {
+   Assert-DreamSkinCodexDirectLaunchTarget -Codex $Codex
+   $argumentLine = ConvertTo-DreamSkinArgumentLine -Arguments $Arguments
+   $process = Start-Process -FilePath "$($Codex.Executable)" -ArgumentList $argumentLine `
+-    -PassThru -ErrorAction Stop
++    -WindowStyle Normal -PassThru -ErrorAction Stop
+   try {
+     if ($process.Id -le 0) { throw 'Windows did not return a Codex process ID after direct launch.' }
+     return $process.Id
+@@ -1041,9 +1046,34 @@ function Start-DreamSkinCodexForDebugging {
+   } else {
+     @(Get-DreamSkinCodexProcesses -Codex $Codex | ForEach-Object { [int]$_.ProcessId })
+   }
++  # This exact registered Store build was observed dropping package-activation
++  # arguments and creating a late ordinary window during direct fallback.
++  # Avoid that activation/stop cascade only for the pinned, validated identity;
++  # other builds retain the conservative manifest-preferred strategy below.
++  if("$($Codex.PackageFullName)" -ceq 'OpenAI.Codex_26.1021.3705.0_x64__2p2nqsd0c76g0'){
++    if("$($Codex.Version)" -cne '26.1021.3705.0' -or
++      "$($Codex.PackageFamilyName)" -cne 'OpenAI.Codex_2p2nqsd0c76g0' -or
++      "$($Codex.ApplicationId)" -cne 'App' -or "$($Codex.AppUserModelId)" -cne 'OpenAI.Codex_2p2nqsd0c76g0!App'){
++      throw (New-DreamSkinStartException -Category 'cdp-launch-failed' -Message 'Known Codex compatibility identity is inconsistent; no application was activated.' -InnerException $null)
++    }
++    Assert-DreamSkinCodexDirectLaunchTarget -Codex $Codex
++    try{$directProcessId=Start-DreamSkinCodexDirect -Codex $Codex -Arguments $Arguments}catch{
++      $failureKind=Get-DreamSkinDirectLaunchFailureKind -Exception $_.Exception
++      $category=if($failureKind -ceq 'access-denied'){'cdp-direct-access-denied'}else{'cdp-launch-failed'}
++      throw (New-DreamSkinStartException -Category $category -Message "Validated direct Codex compatibility launch failed ($failureKind); no package activation or process-stop fallback was attempted." -InnerException $_.Exception)
++    }
++    $directStatus=Wait-DreamSkinCodexDebugArgumentStatus -Codex $Codex -Port $Port
++    if($directStatus -in @('protocol-redirected','not-forwarded')){
++      throw (New-DreamSkinStartException -Category 'cdp-endpoint-unavailable' -Message 'Validated direct Codex compatibility launch did not retain debugging arguments; application processes were preserved.' -InnerException $null)
++    }
++    return [pscustomobject]@{ProcessId=$directProcessId;Strategy='direct-store-executable';ArgumentStatus=$directStatus;PackageArgumentStatus='not-attempted-known-compatibility'}
++  }
    $packageProcessId = Start-DreamSkinCodex -Codex $Codex -Arguments $Arguments
    $packageStatus = Wait-DreamSkinCodexDebugArgumentStatus -Codex $Codex -Port $Port
 -  if ($packageStatus -ne 'protocol-redirected') {
@@ -2684,7 +2842,7 @@ index d66bc51..21fd3eb 100644
      return [pscustomobject]@{
        ProcessId = $packageProcessId
        Strategy = 'package-activation'
-@@ -1070,7 +1073,7 @@ function Start-DreamSkinCodexForDebugging {
+@@ -1070,7 +1100,7 @@ function Start-DreamSkinCodexForDebugging {
        'cdp-launch-failed'
      }
      throw (New-DreamSkinStartException -Category $category `
@@ -2693,7 +2851,7 @@ index d66bc51..21fd3eb 100644
        -InnerException $_.Exception)
    }
  
-@@ -1513,17 +1516,155 @@ function Confirm-DreamSkinRestart {
+@@ -1513,17 +1543,174 @@ function Confirm-DreamSkinRestart {
    return $shell.Popup($Message, 0, 'Codex 动态壁纸', 52) -eq 6
  }
  
@@ -2722,6 +2880,8 @@ index d66bc51..21fd3eb 100644
 +    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
 +    [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
 +    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint cmd);
++    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextLengthW(IntPtr h);
++    [DllImport("user32.dll", EntryPoint="GetWindowLongW")] private static extern int GetWindowLong(IntPtr h,int index);
 +    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr h, StringBuilder text, int count);
 +    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
 +    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
@@ -2733,13 +2893,16 @@ index d66bc51..21fd3eb 100644
 +      try { var args=new string[count]; for(int i=0;i<count;i++) args[i]=Marshal.PtrToStringUni(Marshal.ReadIntPtr(ptr,i*IntPtr.Size)); return args; }
 +      finally { LocalFree(ptr); }
 +    }
++    public static bool IsApplicationWindow(uint owner,uint expected,bool ownerless,bool visible,bool iconic,bool includeHidden,string className,int captionLength,int extendedStyle) {
++      return owner==expected && ownerless && (includeHidden||visible||iconic) && className=="Chrome_WidgetWin_1" && captionLength>0 && (extendedStyle & 0x80)==0;
++    }
 +    public static IntPtr[] Windows(int pid) { return Windows(pid,false); }
 +    public static IntPtr[] Windows(int pid,bool includeHidden) {
 +      var result=new List<IntPtr>();
 +      EnumWindows(delegate(IntPtr h,IntPtr unused) {
 +        uint owner; GetWindowThreadProcessId(h,out owner);
 +        var name=new StringBuilder(256); GetClassName(h,name,name.Capacity);
-+        if(owner==(uint)pid && GetWindow(h,4)==IntPtr.Zero && (includeHidden||IsWindowVisible(h)||IsIconic(h)) && name.ToString()=="Chrome_WidgetWin_1") result.Add(h);
++        if(IsApplicationWindow(owner,(uint)pid,GetWindow(h,4)==IntPtr.Zero,IsWindowVisible(h),IsIconic(h),includeHidden,name.ToString(),GetWindowTextLengthW(h),GetWindowLong(h,-20))) result.Add(h);
 +        return true;
 +      },IntPtr.Zero); return result.ToArray();
 +    }
@@ -2820,7 +2983,7 @@ index d66bc51..21fd3eb 100644
 +
 +function Invoke-DreamSkinCodexWindowActivation {
 +  param([Parameter(Mandatory = $true)][object]$Codex, [int]$Port,
-+    [string]$BrowserId, [string]$ProfilePath,
++    [string]$BrowserId, [string]$ProfilePath, [switch]$ReactivateProfile,
 +    [ValidateRange(0,10000)][int]$ActivationTimeoutMilliseconds=5000)
 +  # Multiple profiles can share one executable. Package-wide AppActivate may
 +  # select an OAuth-created, unmanaged instance and leave the CDP owner hidden.
@@ -2829,14 +2992,28 @@ index d66bc51..21fd3eb 100644
 +    if ($null -eq $before) { return $false }
 +    $windows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId)
 +    $allWindows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId -IncludeHidden)
++    # First-paint auxiliary windows may precede the titled main window. Give
++    # that same browser a bounded discovery period before invoking it again.
++    if ($allWindows.Count -eq 0 -and $ActivationTimeoutMilliseconds -gt 0) {
++      $discoveryDeadline=[DateTime]::UtcNow.AddMilliseconds([Math]::Min(1000,$ActivationTimeoutMilliseconds))
++      do {
++        Start-Sleep -Milliseconds 100
++        $current=Get-DreamSkinManagedWindowIdentity -Codex $Codex -Port $Port -BrowserId $BrowserId -ProfilePath $ProfilePath
++        if ($null -eq $current -or $current.ProcessId -ne $before.ProcessId -or $current.StartedAt -cne $before.StartedAt -or $current.SessionId -ne $before.SessionId) { return $false }
++        $windows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId)
++        $allWindows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId -IncludeHidden)
++      } while ($allWindows.Count -eq 0 -and [DateTime]::UtcNow -lt $discoveryDeadline)
++    }
 +    if ($windows.Count -gt 1 -or $allWindows.Count -gt 1) { return $false }
 +    $current=Get-DreamSkinManagedWindowIdentity -Codex $Codex -Port $Port -BrowserId $BrowserId -ProfilePath $ProfilePath
 +    if ($null -eq $current -or $current.ProcessId -ne $before.ProcessId -or $current.StartedAt -cne $before.StartedAt -or $current.SessionId -ne $before.SessionId) { return $false }
-+    if ($windows.Count -eq 1) {
-+      return Invoke-DreamSkinOwnedWindowRestore -Window $windows[0] -ProcessId $before.ProcessId
++    if ($allWindows.Count -eq 1 -and -not $ReactivateProfile) {
++      return Invoke-DreamSkinOwnedWindowRestore -Window $allWindows[0] -ProcessId $before.ProcessId
 +    }
-+    # Electron's existing profile receives a second normal invocation. Do not
-+    # use the package protocol, restart switches, or any process-stop helper.
++    # Electron's existing profile receives one normal invocation. A session
++    # originally born hidden may need its normal activation event even after
++    # Win32 restored its HWND; renderer visibility still must verify afterward.
++    # Do not use package dispatch, restart switches or any process-stop helper.
 +    $arguments=@('--remote-debugging-address=127.0.0.1',"--remote-debugging-port=$Port","--user-data-dir=$ProfilePath")
 +    [void](Start-DreamSkinCodexDirect -Codex $Codex -Arguments $arguments)
 +    $deadline=[DateTime]::UtcNow.AddMilliseconds($ActivationTimeoutMilliseconds)
@@ -2846,10 +3023,10 @@ index d66bc51..21fd3eb 100644
 +      $windows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId)
 +      $allWindows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $before.ProcessId -IncludeHidden)
 +      if ($windows.Count -gt 1 -or $allWindows.Count -gt 1) { return $false }
-+      if ($windows.Count -eq 1) {
++      if ($allWindows.Count -eq 1) {
 +        $ready=Get-DreamSkinVerifiedCdpIdentity -Port $Port -Codex $Codex
 +        if ($null -ne $ready -and $ready.BrowserId -ceq $BrowserId) {
-+          return Invoke-DreamSkinOwnedWindowRestore -Window $windows[0] -ProcessId $before.ProcessId
++          return Invoke-DreamSkinOwnedWindowRestore -Window $allWindows[0] -ProcessId $before.ProcessId
 +        }
 +      }
 +      if ([DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
@@ -2859,6 +3036,72 @@ index d66bc51..21fd3eb 100644
  }
  
  function Test-DreamSkinRemoteSession {
+diff --git a/windows/scripts/config-utf8.ps1 b/windows/scripts/config-utf8.ps1
+index a41fd24..a6d1936 100644
+--- a/windows/scripts/config-utf8.ps1
++++ b/windows/scripts/config-utf8.ps1
+@@ -1061,6 +1061,10 @@ function Complete-DreamSkinAppearanceTransaction {
+     throw 'Startup appearance transaction changed before completion.'
+   }
+   if ("$($state.Stage)" -ceq 'committed') { return }
++  if ($null -ne $Transaction.JournalBytes -and
++    -not (Test-DreamSkinBytesEqual -Left $Transaction.JournalBytes -Right $state.Bytes)) {
++    throw 'Startup appearance transaction bytes changed before completion.'
++  }
+   $content = Get-DreamSkinAppearanceTransactionContent -Stage 'committed' `
+     -TransactionId $Transaction.TransactionId -Transaction $null
+   Write-DreamSkinUtf8FileAtomically `
+@@ -1068,6 +1072,50 @@ function Complete-DreamSkinAppearanceTransaction {
+     -Content $content -ExpectedBytes $state.Bytes
+ }
+ 
++function Complete-DreamSkinAppliedPendingAppearanceTransaction {
++  param(
++    [Parameter(Mandatory = $true)][string]$ConfigPath,
++    [Parameter(Mandatory = $true)][string]$BackupPath,
++    [Parameter(Mandatory = $true)][scriptblock]$ValidateSession,
++    [Parameter(Mandatory = $true)][object]$SessionContext
++  )
++  $valid=@(& $ValidateSession $SessionContext)
++  if($valid.Count -ne 1 -or $valid[0] -isnot [bool] -or -not $valid[0]){return $false}
++  $state=Read-DreamSkinAppearanceTransactionState -BackupPath $BackupPath
++  if($null -eq $state -or $state.Stage -cne 'preparing'){return $false}
++  $applied=$state.Transaction.Applied
++  # Install always creates its marker before writing config. An absent applied
++  # marker cannot prove that this is a fully applied interrupted installation.
++  if(-not $applied.Marker.Exists){return $false}
++  $markerPath=Get-DreamSkinAppearanceMarkerPath -BackupPath $BackupPath
++  foreach($path in @($ConfigPath,$markerPath)){
++    if(Get-Command Assert-DreamSkinNoReparseComponents -ErrorAction SilentlyContinue){Assert-DreamSkinNoReparseComponents -Path $path}
++  }
++  $configLock=$null;$markerLock=$null
++  try{
++    # These read handles deny writes/deletes until journal promotion completes.
++    # Only the preparing journal is changed; config, marker and backup stay as-is.
++    $configLock=[IO.FileStream]::new($ConfigPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
++    $markerLock=[IO.FileStream]::new($markerPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
++    $current=Get-DreamSkinManagedAppearanceSnapshot -ConfigPath $ConfigPath -BackupPath $BackupPath
++    if($current.DesktopExists -ne $applied.DesktopExists -or
++      $current.DesktopInsertionSeparator -cne $applied.DesktopInsertionSeparator -or
++      -not (Compare-DreamSkinAppearanceMarkerSnapshot -Left $current.Marker -Right $applied.Marker)){return $false}
++    foreach($key in $script:DreamSkinManagedAppearanceKeys){
++      if(-not (Compare-DreamSkinManagedAppearanceEntry `
++        -Left (Get-DreamSkinManagedAppearanceEntry -Snapshot $current -Key $key) `
++        -Right (Get-DreamSkinManagedAppearanceEntry -Snapshot $applied -Key $key))){return $false}
++    }
++    $valid=@(& $ValidateSession $SessionContext)
++    if($valid.Count -ne 1 -or $valid[0] -isnot [bool] -or -not $valid[0]){return $false}
++    Complete-DreamSkinAppearanceTransaction -BackupPath $BackupPath -Transaction $state.Transaction
++    return $true
++  }finally{
++    if($null -ne $markerLock){$markerLock.Dispose()}
++    if($null -ne $configLock){$configLock.Dispose()}
++  }
++}
++
+ function Resolve-DreamSkinPendingAppearanceTransaction {
+   param(
+     [Parameter(Mandatory = $true)][string]$ConfigPath,
 diff --git a/windows/scripts/injector.mjs b/windows/scripts/injector.mjs
 index 3a159c5..1d4ff66 100644
 --- a/windows/scripts/injector.mjs
@@ -3872,7 +4115,7 @@ index 3a159c5..1d4ff66 100644
                earlyScriptId = await registerEarlyPayload(
                  session,
 diff --git a/windows/scripts/start-dream-skin.ps1 b/windows/scripts/start-dream-skin.ps1
-index 120fb4b..e8c3dbb 100644
+index 120fb4b..4526820 100644
 --- a/windows/scripts/start-dream-skin.ps1
 +++ b/windows/scripts/start-dream-skin.ps1
 @@ -5,8 +5,10 @@ param(
@@ -3919,7 +4162,21 @@ index 120fb4b..e8c3dbb 100644
  # RDP sessions composite through WARP (software D3D): a full-window video
  # wallpaper there burns CPU in the fake GPU process and floods the remote
  # stream. Flag the injector so video themes degrade to one captured poster
-@@ -169,6 +197,10 @@ try {
+@@ -48,6 +76,13 @@ function Invoke-DreamSkinStartupAppearanceRecovery {
+   }
+ }
+ 
++function Get-DreamSkinVerificationOutput {
++  param([Parameter(Mandatory=$true)][object]$Result)
++  if(@($Result.PSObject.Properties|Where-Object Name -CEQ 'StandardOutput').Count){return @($Result.StandardOutput)}
++  # Compatibility with older native wrappers and isolated lifecycle fixtures.
++  return @($Result.Output)
++}
++
+ function Test-DreamSkinRenderedVerificationOutput {
+   param([AllowEmptyCollection()][object[]]$Output)
+   try {
+@@ -169,6 +204,10 @@ try {
      # verified endpoint while Get-DreamSkinCodexInstall already resolves to
      # the new one.  Adopt the running install instead of restarting it.
      $runningRegistered = Get-DreamSkinVerifiedCdpIdentityForAnyRegistered -Port $Port
@@ -3930,7 +4187,39 @@ index 120fb4b..e8c3dbb 100644
      if ($null -ne $runningRegistered) {
        $cdpIdentity = $runningRegistered.Identity
        $codex = $runningRegistered.Codex
-@@ -210,13 +242,38 @@ try {
+@@ -201,6 +240,31 @@ try {
+   }
+   $pendingAppearanceTransaction = Test-DreamSkinPendingAppearanceTransaction `
+     -BackupPath $BackupPath
++  if($pendingAppearanceTransaction -and -not $RestartExisting -and $null -ne $cdpIdentity){
++    try{
++      $pendingOwner=Get-DreamSkinManagedWindowIdentity -Codex $codex -Port $Port `
++        -BrowserId $cdpIdentity.BrowserId -ProfilePath $ProfilePath
++      if($null -ne $pendingOwner -and $pendingOwner.SessionId -eq [Diagnostics.Process]::GetCurrentProcess().SessionId){
++        $pendingContext=[pscustomobject]@{Codex=$codex;Port=$Port;BrowserId=$cdpIdentity.BrowserId;ProfilePath=$ProfilePath;Owner=$pendingOwner}
++        $samePendingSession={
++          param($context)
++          $owner=Get-DreamSkinManagedWindowIdentity -Codex $context.Codex -Port $context.Port `
++            -BrowserId $context.BrowserId -ProfilePath $context.ProfilePath
++          return $null -ne $owner -and $owner.ProcessId -eq $context.Owner.ProcessId -and
++            $owner.StartedAt -ceq $context.Owner.StartedAt -and $owner.SessionId -eq $context.Owner.SessionId
++        }
++        if(Complete-DreamSkinAppliedPendingAppearanceTransaction -ConfigPath $ConfigPath `
++          -BackupPath $BackupPath -ValidateSession $samePendingSession -SessionContext $pendingContext){
++          # This commits configuration ownership only. Window visibility and
++          # wallpaper rendering still require the unchanged verification below.
++          $pendingAppearanceTransaction=$false
++          $appearanceRecovery='retained'
++        }
++      }
++    }catch{
++      Write-Warning 'Pending appearance could not be reused safely; existing recovery requirements were preserved.'
++    }
++  }
+   if ($pendingAppearanceTransaction) {
+     # A previous process ended before it could commit or recover appearance.
+     # Do not reuse its live session: the locked restart path closes Codex first,
+@@ -210,13 +274,38 @@ try {
    }
    $debugReady = $null -ne $cdpIdentity
    $hiddenSessionIdentity = $null
@@ -3951,9 +4240,10 @@ index 120fb4b..e8c3dbb 100644
      $visibility = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
        $Injector, '--verify', '--port', "$Port", '--browser-id', $cdpIdentity.BrowserId,
        '--theme-dir', $themePaths.Active, '--timeout-ms', '5000')
-     if (Test-DreamSkinHiddenVerificationOutput -Output $visibility.Output) {
+-    if (Test-DreamSkinHiddenVerificationOutput -Output $visibility.Output) {
 -      $hiddenSessionIdentity = $cdpIdentity
 -      $debugReady = $false
++    if (Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput -Result $visibility)) {
 +      # Restore only the verified managed profile's existing HWND. OAuth can
 +      # open a second same-executable profile; activating that process cannot
 +      # make this browser's renderer pass the unchanged visibility checks.
@@ -3964,14 +4254,39 @@ index 120fb4b..e8c3dbb 100644
 +          $Injector, '--verify', '--port', "$Port", '--browser-id', $cdpIdentity.BrowserId,
 +          '--theme-dir', $themePaths.Active, '--timeout-ms', '5000')
 +      }
-+      if (-not $restoredManagedWindow -or (Test-DreamSkinHiddenVerificationOutput -Output $visibility.Output)) {
++      if (-not $restoredManagedWindow -or (Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput -Result $visibility))) {
 +        $hiddenSessionIdentity = $cdpIdentity
 +        $debugReady = $false
 +      }
      }
    }
    # Explicit restart must also replace a still-live CDP session. Closing the
-@@ -583,7 +640,7 @@ try {
+@@ -341,7 +430,11 @@ try {
+         -Port $Port -PreserveProcessIds $debugLaunchBaselineProcessIds
+       $launchedWithCdp = $true
+       if ($debugLaunch.Strategy -eq 'direct-store-executable') {
+-        Write-Warning 'Codex package activation did not preserve the CDP arguments; using the validated Store executable fallback for this session.'
++        if($debugLaunch.PackageArgumentStatus -ceq 'not-attempted-known-compatibility'){
++          Write-Warning 'Using the validated direct Store executable for this exact Codex compatibility profile.'
++        }else{
++          Write-Warning 'Codex package activation did not preserve the CDP arguments; using the validated Store executable fallback for this session.'
++        }
+       }
+     }
+ 
+@@ -394,6 +487,11 @@ try {
+     throw $launchError
+   }
+ 
++  # Bring the exact owned main window forward before a slow Scene compile or
++  # verification probe. Hidden/tool auxiliary windows are filtered separately.
++  [void](Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port $Port `
++    -BrowserId $cdpIdentity.BrowserId -ProfilePath $ProfilePath)
++
+   $startFailureCategory = 'state-reconciliation-failed'
+   $pauseCleared = $false
+   try {
+@@ -583,7 +681,7 @@ try {
      # shell markers are not rendered yet when the daemon has barely started,
      # and a single early miss used to tear the whole startup down.  The
      # watcher keeps applying in the background, so retry until a deadline.
@@ -3980,16 +4295,153 @@ index 120fb4b..e8c3dbb 100644
      $forceInjectedAfterVerifyFailure = $false
      while ($true) {
        $verify = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
-@@ -605,7 +662,8 @@ try {
+@@ -598,14 +696,16 @@ try {
+       # builds never resolve -- comes back false.  Killing Codex in that state
+       # destroys a working skin the user is looking at, so remember it and let
+       # the rollback below leave the app alone (#267).
+-      if (Test-DreamSkinRenderedVerificationOutput -Output $verify.Output) {
++      if (Test-DreamSkinRenderedVerificationOutput -Output @(Get-DreamSkinVerificationOutput -Result $verify)) {
+         # Latch positive evidence. A later transient or malformed probe must not
+         # erase proof that a complete skin was already visible on screen.
+         $skinLooksRendered = $true
        }
        if (-not $forceInjectedAfterVerifyFailure) {
          $forceInjectedAfterVerifyFailure = $true
 -        try { [void](Invoke-DreamSkinCodexWindowActivation -Codex $codex) } catch {}
++        $reactivateHiddenProfile=Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput -Result $verify)
 +        try { [void](Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port $Port `
-+          -BrowserId $cdpIdentity.BrowserId -ProfilePath $ProfilePath) } catch {}
++          -BrowserId $cdpIdentity.BrowserId -ProfilePath $ProfilePath -ReactivateProfile:$reactivateHiddenProfile) } catch {}
          $once = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
            $Injector, '--once', '--port', "$Port",
            '--browser-id', $cdpIdentity.BrowserId, '--theme-dir', $themePaths.Active,
+@@ -613,7 +713,7 @@ try {
+         Write-DreamSkinUtf8FileAtomically -Path $VerifyPath -Content (
+           (($verify.Output + $once.Output) -join "`r`n") + "`r`n"
+         )
+-        if (Test-DreamSkinRenderedVerificationOutput -Output $once.Output) {
++        if (Test-DreamSkinRenderedVerificationOutput -Output @(Get-DreamSkinVerificationOutput -Result $once)) {
+           $skinLooksRendered = $true
+         }
+         if ($once.ExitCode -eq 0) { break }
+@@ -647,7 +747,7 @@ try {
+         Write-Warning "The rollback injector has not exited yet: PID $($daemon.Id). State was preserved so the next start can reconcile it."
+       }
+     }
+-    if ($injectorStopped -and -not $launchedWithCdp -and -not $skinLooksRendered) {
++    if ($injectorStopped -and -not $skinLooksRendered) {
+       try {
+         $rollbackIdentity = Get-DreamSkinVerifiedCdpIdentity -Port $Port -Codex $codex
+         if ($null -ne $rollbackIdentity -and $rollbackIdentity.BrowserId -ceq $cdpIdentity.BrowserId) {
+@@ -662,23 +762,14 @@ try {
+     }
+     if ($injectorStopped) { Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue }
+     if ($launchedWithCdp -and -not $skinLooksRendered) {
+-      $rendererRollbackClosed = $false
+-      try {
+-        Stop-DreamSkinCodex -Codex $codex -AllowForce
+-        $rendererRollbackClosed = (Get-DreamSkinCodexProcesses -Codex $codex).Count -eq 0
+-      } catch {
+-        $rendererRollbackClosed = $false
+-      }
+-      if ($rendererRollbackClosed) {
+-        $appearanceRecovery = Invoke-DreamSkinStartupAppearanceRecovery `
+-          -Transaction $appearanceTransaction -ConfigPath $ConfigPath -BackupPath $BackupPath
+-        try { $null = Start-DreamSkinCodex -Codex $codex } catch {
+-          Write-Warning 'Startup rollback could not reopen Codex automatically.'
+-        }
+-      } else {
+-        if ($null -ne $appearanceTransaction) { $appearanceRecovery = 'blocked' }
+-        Write-Warning 'Startup rollback could not fully close Codex; close Codex to ensure its CDP port is closed.'
+-      }
++      # A normal window can be opened after our launch snapshot. Package-wide
++      # rollback would close that unrelated session too. Stop only our injector
++      # and remove live skin through the still-matching CDP browser above;
++      # preserve all application processes and report the original failure.
++      # The appearance transaction cannot be rolled back while this session is
++      # alive, so retain its pending record for an explicit later recovery.
++      if ($null -ne $appearanceTransaction) { $appearanceRecovery = 'blocked' }
++      Write-Warning 'Renderer verification failed. Codex windows were preserved; close the managed session before recovering its pending appearance transaction.'
+     } elseif ($skinLooksRendered -and $ResultToken -and $launchedWithCdp -and
+       $null -ne $appearanceTransaction) {
+       # One-click apply has a parent theme-file transaction. Leaving the new
+diff --git a/windows/tests/config-startup-rollback.tests.ps1 b/windows/tests/config-startup-rollback.tests.ps1
+index cc83dfc..d3a8da3 100644
+--- a/windows/tests/config-startup-rollback.tests.ps1
++++ b/windows/tests/config-startup-rollback.tests.ps1
+@@ -378,6 +378,56 @@ try {
+     throw 'A completed startup appearance transaction was rolled back as pending.'
+   }
+ 
++  # A still-running exact managed session can reuse a fully applied interrupted
++  # transaction. Promotion owns only the journal; it never rewrites user files.
++  function New-AppliedPendingFixture([string]$Name){
++    $config=Join-Path $temporaryRoot ($Name+'.toml')
++    $backup=Join-Path $temporaryRoot ($Name+'.before.toml')
++    Write-FixtureConfig -Path $config -Content $conflictOriginal
++    $transaction=Install-DreamSkinBaseTheme -ConfigPath $config -BackupPath $backup -AppearanceTheme 'dark' -PassThruTransaction
++    return [pscustomobject]@{Config=$config;Backup=$backup;Marker=(Get-DreamSkinAppearanceMarkerPath -BackupPath $backup);Journal=(Get-DreamSkinAppearanceTransactionPath -BackupPath $backup);Transaction=$transaction}
++  }
++  $promote=New-AppliedPendingFixture 'pending-promote'
++  $promoteConfig=[IO.File]::ReadAllBytes($promote.Config);$promoteMarker=[IO.File]::ReadAllBytes($promote.Marker);$promoteBackup=[IO.File]::ReadAllBytes($promote.Backup)
++  $script:promoteGuards=0
++  $promoted=Complete-DreamSkinAppliedPendingAppearanceTransaction -ConfigPath $promote.Config -BackupPath $promote.Backup `
++    -ValidateSession {param($context);$script:promoteGuards++;return $true} -SessionContext 'exact-session'
++  if(-not $promoted -or $script:promoteGuards -ne 2 -or (Read-DreamSkinAppearanceTransactionState -BackupPath $promote.Backup).Stage -cne 'committed' -or
++    -not (Test-DreamSkinBytesEqual $promoteConfig ([IO.File]::ReadAllBytes($promote.Config))) -or
++    -not (Test-DreamSkinBytesEqual $promoteMarker ([IO.File]::ReadAllBytes($promote.Marker))) -or
++    -not (Test-DreamSkinBytesEqual $promoteBackup ([IO.File]::ReadAllBytes($promote.Backup)))){throw 'Applied pending promotion changed config/marker/backup or did not revalidate its session.'}
++  foreach($case in @('partial','private-key','private-marker','session-changed')){
++    $pending=New-AppliedPendingFixture ('pending-'+$case)
++    if($case -eq 'partial'){Write-FixtureConfig -Path $pending.Config -Content $conflictOriginal}
++    if($case -eq 'private-key'){Write-FixtureConfig -Path $pending.Config -Content ((Read-DreamSkinUtf8File $pending.Config).Replace('appearanceTheme = "dark"','appearanceTheme = "light"'))}
++    if($case -eq 'private-marker'){Write-FixtureConfig -Path $pending.Marker -Content (Get-DreamSkinAppearanceMarkerContent -Managed $false)}
++    $beforeConfig=[IO.File]::ReadAllBytes($pending.Config);$beforeMarker=[IO.File]::ReadAllBytes($pending.Marker);$beforeJournal=[IO.File]::ReadAllBytes($pending.Journal)
++    $script:pendingGuards=0
++    $guard={param($context);$script:pendingGuards++;return $case -cne 'session-changed' -or $script:pendingGuards -eq 1}
++    $accepted=Complete-DreamSkinAppliedPendingAppearanceTransaction -ConfigPath $pending.Config -BackupPath $pending.Backup -ValidateSession $guard -SessionContext 'fixture'
++    if($accepted -or (Read-DreamSkinAppearanceTransactionState -BackupPath $pending.Backup).Stage -cne 'preparing' -or
++      -not (Test-DreamSkinBytesEqual $beforeConfig ([IO.File]::ReadAllBytes($pending.Config))) -or
++      -not (Test-DreamSkinBytesEqual $beforeMarker ([IO.File]::ReadAllBytes($pending.Marker))) -or
++      -not (Test-DreamSkinBytesEqual $beforeJournal ([IO.File]::ReadAllBytes($pending.Journal)))){throw "Unsafe applied pending promotion accepted or mutated evidence: $case"}
++  }
++  $pendingCas=New-AppliedPendingFixture 'pending-cas'
++  $pendingCasConfig=[IO.File]::ReadAllBytes($pendingCas.Config);$pendingCasMarker=[IO.File]::ReadAllBytes($pendingCas.Marker)
++  $lateJournal=(Read-DreamSkinUtf8File $pendingCas.Journal)+' '
++  $realPromotionWriter=(Get-Command Write-DreamSkinUtf8FileAtomically -CommandType Function).ScriptBlock
++  $script:promotionRace=$false;$promotionRejected=$false
++  try{
++    function Write-DreamSkinUtf8FileAtomically {
++      param([string]$Path,[AllowEmptyString()][string]$Content,[AllowNull()][byte[]]$ExpectedBytes)
++      if($Path -ceq $pendingCas.Journal -and -not $script:promotionRace){$script:promotionRace=$true;[IO.File]::WriteAllText($Path,$lateJournal,$utf8NoBom)}
++      & $realPromotionWriter @PSBoundParameters
++    }
++    try{Complete-DreamSkinAppliedPendingAppearanceTransaction -ConfigPath $pendingCas.Config -BackupPath $pendingCas.Backup -ValidateSession {param($context);return $true} -SessionContext 'fixture'|Out-Null}catch{$promotionRejected=$true}
++  }finally{Set-Item Function:\Write-DreamSkinUtf8FileAtomically -Value $realPromotionWriter}
++  if(-not $promotionRejected -or -not $script:promotionRace -or (Read-DreamSkinUtf8File $pendingCas.Journal) -cne $lateJournal -or
++    (Read-DreamSkinAppearanceTransactionState -BackupPath $pendingCas.Backup).Stage -cne 'preparing' -or
++    -not (Test-DreamSkinBytesEqual $pendingCasConfig ([IO.File]::ReadAllBytes($pendingCas.Config))) -or
++    -not (Test-DreamSkinBytesEqual $pendingCasMarker ([IO.File]::ReadAllBytes($pendingCas.Marker)))){throw 'Pending promotion CAS failure did not preserve the late journal/config/marker.'}
++
+   # Close the final precondition-check/File.Replace window. File.Replace's
+   # backup exposes the exact bytes that were replaced, so a late writer can be
+   # restored even when it lands after the initial byte comparison.
+@@ -492,7 +542,15 @@ try {
+   }
+   [System.IO.File]::Delete($retainedArtifacts[0].FullName)
+ } finally {
+-  Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
++  if(Test-Path -LiteralPath $temporaryRoot){
++    $cleanupBase=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath).TrimEnd('\')
++    $cleanupTarget=[IO.Path]::GetFullPath((Resolve-Path -LiteralPath $temporaryRoot).ProviderPath).TrimEnd('\')
++    $cleanupItem=Get-Item -LiteralPath $temporaryRoot -Force
++    if([IO.Path]::GetDirectoryName($cleanupTarget) -ine $cleanupBase -or
++      [IO.Path]::GetFileName($cleanupTarget) -cnotmatch '^dreamskin-config-startup-rollback-[a-f0-9]{32}$' -or
++      ($cleanupItem.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Refused cleanup outside the unique startup rollback fixture.'}
++    Remove-Item -LiteralPath $cleanupTarget -Recurse -Force -ErrorAction SilentlyContinue
++  }
+ }
+ 
+ Write-Output 'PASS: startup appearance rollback preserves concurrent config and marker changes.'
 diff --git a/windows/tests/dsh-proxy.test.mjs b/windows/tests/dsh-proxy.test.mjs
 new file mode 100644
 index 0000000..8875ebd
@@ -4583,13 +5035,21 @@ index 0000000..8875ebd
 +});
 diff --git a/windows/tests/managed-window-activation.tests.ps1 b/windows/tests/managed-window-activation.tests.ps1
 new file mode 100644
-index 0000000..f776e94
+index 0000000..60d886d
 --- /dev/null
 +++ b/windows/tests/managed-window-activation.tests.ps1
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,255 @@
 +[CmdletBinding()]
 +param([Parameter(Mandatory=$true)][string]$Root)
 +$ErrorActionPreference='Stop'
++# The manager runs its native bridge in Windows PowerShell 5.1. Hosted build
++# gates may start in pwsh; exercise that same ErrorRecord-based native runtime.
++if($PSVersionTable.PSVersion.Major -ge 6){
++  $windowsPowerShell=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
++  & $windowsPowerShell -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $PSCommandPath -Root $Root
++  if($LASTEXITCODE -ne 0){throw 'Windows PowerShell native launch/stream contract tests failed.'}
++  return
++}
 +. (Join-Path $Root 'scripts/common-windows.ps1')
 +$identityFunction=${function:Get-DreamSkinManagedWindowIdentity}
 +$codex=[pscustomobject]@{Executable='C:\fixture\ChatGPT.exe'}
@@ -4597,6 +5057,97 @@ index 0000000..f776e94
 +# Parsing is the real Windows argv parser. No windows are enumerated or changed.
 +$parsed=@(Get-DreamSkinManagedWindowArguments -CommandLine ('"C:\fixture\ChatGPT.exe" "--user-data-dir='+$profile+'" --remote-debugging-port=9335'))
 +if($parsed.Count -ne 3 -or $parsed[1] -cne ('--user-data-dir='+$profile)){throw 'Quoted Unicode profile argv changed'}
++# Real Codex roots expose auxiliary Chromium HWNDs as well as their main
++# window. Feed the observed three-window shape through the actual native
++# classifier without enumerating or acting on any desktop window.
++$capturedMetadata=@(
++  [pscustomobject]@{name='main';captionLength=7;extendedStyle=0x200008},
++  [pscustomobject]@{name='tool';captionLength=7;extendedStyle=0x200088},
++  [pscustomobject]@{name='nameless';captionLength=0;extendedStyle=0x200008}
++)
++$applicationWindows=@($capturedMetadata|Where-Object {
++  [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$true,$false,$false,$true,'Chrome_WidgetWin_1',$_.captionLength,$_.extendedStyle)
++})
++if($applicationWindows.Count -ne 1 -or $applicationWindows[0].name -cne 'main'){
++  throw 'Chromium auxiliary HWNDs made one hidden application window look ambiguous.'
++}
++if([DreamSkin.ManagedWindow]::IsApplicationWindow(20,10,$true,$true,$false,$true,'Chrome_WidgetWin_1',7,0) -or
++   [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$false,$true,$false,$true,'Chrome_WidgetWin_1',7,0) -or
++   [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$true,$false,$false,$false,'Chrome_WidgetWin_1',7,0) -or
++   [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$true,$true,$false,$true,'OtherWindowClass',7,0)){
++  throw 'Wrong-owner, owned-popup, hidden-without-opt-in or unrelated-class metadata was accepted.'
++}
++if(-not [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$true,$true,$false,$false,'Chrome_WidgetWin_1',7,0) -or
++   -not [DreamSkin.ManagedWindow]::IsApplicationWindow(10,10,$true,$false,$true,$false,'Chrome_WidgetWin_1',7,0)){
++  throw 'A visible or minimized application window was lost during auxiliary-window filtering.'
++}
++
++# Exercise native stderr ErrorRecords in real Windows PowerShell, then run only
++# the startup JSON predicates extracted from its AST (never the app lifecycle).
++$parseTokens=$null;$parseErrors=$null
++$startupAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $Root 'scripts/start-dream-skin.ps1'),[ref]$parseTokens,[ref]$parseErrors)
++foreach($functionName in @('Get-DreamSkinVerificationOutput','Test-DreamSkinHiddenVerificationOutput','Test-DreamSkinRenderedVerificationOutput')){
++  $definition=$startupAst.Find({param($node);$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $functionName},$true)
++  if($null -eq $definition){throw "Missing startup verification function: $functionName"}
++  . ([scriptblock]::Create($definition.Extent.Text))
++}
++$hiddenJson='{"targets":[{"result":{"installed":true,"stylePresent":true,"documentHidden":true,"documentVisibility":"hidden","readiness":{"documentPass":false,"viewportPass":true,"structurePass":true}}}]}'
++$hiddenBase64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($hiddenJson))
++$nodeCommand=Get-Command node.exe -CommandType Application -ErrorAction Stop|Select-Object -First 1
++$nativeCode="process.stderr.write('[dream-skin] compat profile not applied: revision-not-newer\n');process.stdout.write(Buffer.from('$hiddenBase64','base64'));process.exitCode=7"
++$nativeResult=Invoke-DreamSkinNative -FilePath $nodeCommand.Source -ArgumentList @('-e',$nativeCode)
++if($nativeResult.ExitCode -ne 7 -or ($nativeResult.StandardOutput -join "`n") -cne $hiddenJson -or
++  ($nativeResult.StandardError -join "`n") -notlike '*revision-not-newer*' -or ($nativeResult.Output -join "`n") -notlike '*revision-not-newer*' -or
++  $ErrorActionPreference -cne 'Stop'){throw 'Native stdout/stderr separation lost JSON, diagnostic text, exit status or the caller preference.'}
++if(-not (Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput $nativeResult)) -or
++  (Test-DreamSkinHiddenVerificationOutput -Output $nativeResult.Output)){throw 'A real native stderr diagnostic masked hidden-renderer JSON or merged diagnostics were parsed as verification.'}
++$stderrOnly=[pscustomobject]@{Output=@($hiddenJson);StandardOutput=@();StandardError=@($hiddenJson);ExitCode=2}
++if(Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput $stderrOnly)){throw 'Verification trusted JSON supplied only through diagnostic stderr.'}
++if(-not (Test-DreamSkinHiddenVerificationOutput -Output @(Get-DreamSkinVerificationOutput ([pscustomobject]@{Output=@($hiddenJson);ExitCode=2})))){throw 'Older stdout-only native result compatibility was lost.'}
++$discarded=Invoke-DreamSkinNative -FilePath $nodeCommand.Source -ArgumentList @('-e',$nativeCode) -DiscardStderr
++if($discarded.ExitCode -ne 7 -or @($discarded.StandardError).Count -ne 0 -or ($discarded.StandardOutput -join "`n") -cne $hiddenJson){throw 'DiscardStderr lost stdout or exit status.'}
++
++# Exact package compatibility is a direct-first exception, never a broad
++# version range. All launch functions below are inert counters.
++$compatRoot=Join-Path ([IO.Path]::GetTempPath()) ('dreamskin-cold-profile-'+[guid]::NewGuid().ToString('N'))
++$compatNames=@('Start-DreamSkinCodex','Start-DreamSkinCodexDirect','Wait-DreamSkinCodexDebugArgumentStatus','Get-DreamSkinCodexProcesses','Stop-DreamSkinCodex')
++$compatOriginal=@{}
++foreach($name in $compatNames){$compatOriginal[$name]=(Get-Command $name -CommandType Function).ScriptBlock}
++try{
++  $compatExe=Join-Path $compatRoot 'app/ChatGPT.exe'
++  [void][IO.Directory]::CreateDirectory((Split-Path -Parent $compatExe));[IO.File]::WriteAllBytes($compatExe,[byte[]]@())
++  $known=[pscustomobject]@{PackageRoot=$compatRoot;Executable=$compatExe;PackageFullName='OpenAI.Codex_26.1021.3705.0_x64__2p2nqsd0c76g0';Version='26.1021.3705.0';PackageFamilyName='OpenAI.Codex_2p2nqsd0c76g0';ApplicationId='App';AppUserModelId='OpenAI.Codex_2p2nqsd0c76g0!App';SignatureKind='Store'}
++  $compatArguments=@('--remote-debugging-address=127.0.0.1','--remote-debugging-port=9335','--user-data-dir=C:\fixture\managed profile')
++  function Reset-CompatibilityCounters {$script:compatPackage=0;$script:compatDirect=0;$script:compatStop=0;$script:compatStatus='forwarded';$script:compatDenied=$false;$script:compatPreserved=@(10,20)}
++  function Get-DreamSkinCodexProcesses {param($Codex);return @($script:compatPreserved|ForEach-Object {[pscustomobject]@{ProcessId=$_}})}
++  function Start-DreamSkinCodex {param($Codex,$Arguments);$script:compatPackage++;return 101}
++  function Start-DreamSkinCodexDirect {param($Codex,$Arguments);$script:compatDirect++;if(($Arguments -join '|') -cne ($compatArguments -join '|')){throw 'Known compatibility launch changed its profile flags'};if($script:compatDenied){throw [UnauthorizedAccessException]::new('fixture denied')};return 202}
++  function Wait-DreamSkinCodexDebugArgumentStatus {param($Codex,$Port);return $script:compatStatus}
++  function Stop-DreamSkinCodex {param($Codex,$PreserveProcessIds,[switch]$AllowForce);$script:compatStop++;$script:compatPreserved=@();throw 'Compatibility launch must not stop applications'}
++  Reset-CompatibilityCounters
++  $launch=Start-DreamSkinCodexForDebugging -Codex $known -Arguments $compatArguments -Port 9335
++  if($launch.ProcessId -ne 202 -or $launch.Strategy -cne 'direct-store-executable' -or $script:compatDirect -ne 1 -or $script:compatPackage -ne 0 -or $script:compatStop -ne 0 -or ($script:compatPreserved -join ',') -cne '10,20'){throw 'Exact compatibility profile did not use direct-only launch while preserving existing roots.'}
++  $other=$known.PSObject.Copy();$other.PackageFullName='OpenAI.Codex_26.1021.3706.0_x64__2p2nqsd0c76g0';$other.Version='26.1021.3706.0'
++  Reset-CompatibilityCounters
++  $launch=Start-DreamSkinCodexForDebugging -Codex $other -Arguments $compatArguments -Port 9335
++  if($launch.Strategy -cne 'package-activation' -or $script:compatPackage -ne 1 -or $script:compatDirect -ne 0 -or $script:compatStop -ne 0){throw 'Unverified package versions did not retain manifest-preferred launch.'}
++  foreach($field in @('Version','PackageFamilyName','ApplicationId','AppUserModelId','SignatureKind','Executable')){
++    Reset-CompatibilityCounters;$invalid=$known.PSObject.Copy();$invalid.$field='invalid-fixture-value';$rejected=$false
++    try{Start-DreamSkinCodexForDebugging -Codex $invalid -Arguments $compatArguments -Port 9335|Out-Null}catch{$rejected=$true}
++    if(-not $rejected -or $script:compatDirect -ne 0 -or $script:compatPackage -ne 0 -or $script:compatStop -ne 0){throw "Invalid known package identity caused a launch: $field"}
++  }
++  foreach($failure in @('not-forwarded','access-denied')){
++    Reset-CompatibilityCounters
++    if($failure -ceq 'access-denied'){$script:compatDenied=$true}else{$script:compatStatus=$failure}
++    $rejected=$false
++    try{Start-DreamSkinCodexForDebugging -Codex $known -Arguments $compatArguments -Port 9335|Out-Null}catch{$rejected=$true}
++    if(-not $rejected -or $script:compatDirect -ne 1 -or $script:compatPackage -ne 0 -or $script:compatStop -ne 0 -or ($script:compatPreserved -join ',') -cne '10,20'){throw "Direct compatibility failure invoked a package/stop cascade: $failure"}
++  }
++}finally{
++  foreach($name in $compatNames){Set-Item ("function:$name") -Value $compatOriginal[$name]}
++  [IO.File]::Delete((Join-Path $compatRoot 'app/ChatGPT.exe'))
++  [IO.Directory]::Delete((Join-Path $compatRoot 'app'),$false);[IO.Directory]::Delete($compatRoot,$false)
++}
 +$script:listeners=@([pscustomobject]@{LocalAddress='127.0.0.1';OwningProcess=10})
 +$script:process=[pscustomobject]@{ProcessId=10;ExecutablePath=$codex.Executable;CreationDate=[datetime]::UtcNow;SessionId=1;CommandLine='fixture'}
 +$script:args=@('ChatGPT.exe',('--user-data-dir='+$profile))
@@ -4625,6 +5176,7 @@ index 0000000..f776e94
 +if($null -ne (Read-FixtureIdentity)){throw 'Public listener accepted'}
 +
 +$script:restoreCalls=0
++$script:restoreResult=$true
 +$script:identityCalls=0
 +$script:change='none'
 +$script:windows=@([IntPtr]111)
@@ -4637,10 +5189,10 @@ index 0000000..f776e94
 +  $script:identityCalls++
 +  if($script:change -eq 'missing' -or ($script:launchCalls -gt 0 -and $script:change -eq 'post-browser')){return $null}
 +  $changed=$script:identityCalls -gt 1
-+  return [pscustomobject]@{ProcessId=$(if(($changed -and $script:change -eq 'pid') -or ($script:launchCalls -gt 0 -and $script:change -eq 'post-pid')){20}else{10});StartedAt=$(if(($changed -and $script:change -eq 'start') -or ($script:launchCalls -gt 0 -and $script:change -eq 'post-start')){'new'}else{'old'});SessionId=1}
++  return [pscustomobject]@{ProcessId=$(if(($changed -and $script:change -eq 'pid') -or ($script:launchCalls -gt 0 -and $script:change -eq 'post-pid')){20}else{10});StartedAt=$(if(($changed -and $script:change -eq 'start') -or ($script:launchCalls -gt 0 -and $script:change -eq 'post-start')){'new'}else{'old'});SessionId=$(if($script:launchCalls -gt 0 -and $script:change -eq 'post-session'){2}else{1})}
 +}
 +function Get-DreamSkinOwnedCodexWindows {param($ProcessId,[switch]$IncludeHidden);if($ProcessId -ne 10){throw 'Enumerated unmanaged PID'};if($IncludeHidden -and $null -ne $script:allWindows){return $script:allWindows};return $script:windows}
-+function Invoke-DreamSkinOwnedWindowRestore {param($Window,$ProcessId);if($Window -ne [IntPtr]111 -or $ProcessId -ne 10){throw 'Wrong HWND/PID restored'};$script:restoreCalls++;return $true}
++function Invoke-DreamSkinOwnedWindowRestore {param($Window,$ProcessId);if($Window -ne [IntPtr]111 -or $ProcessId -ne 10){throw 'Wrong HWND/PID restored'};$script:restoreCalls++;return $script:restoreResult}
 +function Start-DreamSkinCodexDirect {
 +  param($Codex,[string[]]$Arguments)
 +  $script:launchCalls++
@@ -4648,7 +5200,9 @@ index 0000000..f776e94
 +    $Arguments[0] -cne '--remote-debugging-address=127.0.0.1' -or $Arguments[1] -cne '--remote-debugging-port=9335' -or
 +    $Arguments[2] -cne ('--user-data-dir='+$profile)){throw 'Wrong single-profile activation arguments'}
 +  if($script:launchMode -eq 'visible'){$script:windows=@([IntPtr]111);$script:allWindows=@([IntPtr]111)}
++  if($script:launchMode -eq 'hidden'){$script:windows=@();$script:allWindows=@([IntPtr]111)}
 +  if($script:launchMode -eq 'ambiguous'){$script:windows=@([IntPtr]111,[IntPtr]222);$script:allWindows=$script:windows}
++  if($script:change -eq 'post-browser-id'){$script:uuid='other-browser'}
 +  return 99
 +}
 +function Stop-DreamSkinCodex {$script:stopCalls++;throw 'Activation attempted package-wide stop'}
@@ -4666,9 +5220,40 @@ index 0000000..f776e94
 +  if($case -eq 'hidden-hwnd'){$script:allWindows=@([IntPtr]111)}
 +  $script:uuid='reviewed-browser'
 +  $beforeRestore=$script:restoreCalls
++  $expectedLaunches=if($case -eq 'hidden-hwnd'){0}else{1}
 +  if(!(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ActivationTimeoutMilliseconds 0) -or
-+    $script:launchCalls -ne 1 -or $script:restoreCalls -ne $beforeRestore+1){throw "Windowless profile was not normally reactivated: $case"}
++    $script:launchCalls -ne $expectedLaunches -or $script:restoreCalls -ne $beforeRestore+1){throw "Existing hidden HWND must restore directly; only a windowless profile may reactivate: $case"}
 +}
++$script:identityCalls=0;$script:change='none';$script:windows=@();$script:allWindows=@();$script:launchCalls=0;$script:launchMode='hidden'
++$beforeRestore=$script:restoreCalls
++if(!(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ActivationTimeoutMilliseconds 0) -or
++  $script:launchCalls -ne 1 -or $script:restoreCalls -ne $beforeRestore+1){throw 'A reopened profile with a newly hidden HWND must restore that HWND'}
++foreach($case in @('pid','start')){
++  $script:identityCalls=0;$script:change=$case;$script:windows=@();$script:allWindows=@([IntPtr]111);$script:launchCalls=0
++  $beforeRestore=$script:restoreCalls
++  if(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ActivationTimeoutMilliseconds 0){throw "Replaced hidden-window owner was accepted: $case"}
++  if($script:restoreCalls -ne $beforeRestore -or $script:launchCalls -ne 0){throw "A replaced hidden owner received a window action: $case"}
++}
++$script:identityCalls=0;$script:change='none';$script:windows=@();$script:allWindows=@([IntPtr]111);$script:launchCalls=0;$script:restoreResult=$false
++if(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ActivationTimeoutMilliseconds 0){throw 'A failed hidden-window restoration was reported as success'}
++if($script:launchCalls -ne 0){throw 'Failure to restore an existing hidden HWND launched a competing instance'}
++$script:restoreResult=$true
++foreach($case in @('os-hidden','os-visible')){
++  $script:identityCalls=0;$script:change='none';$script:windows=@();$script:allWindows=@([IntPtr]111);$script:launchCalls=0;$script:launchMode='visible';$script:uuid='reviewed-browser'
++  if($case -eq 'os-visible'){$script:windows=@([IntPtr]111)}
++  $beforeRestore=$script:restoreCalls
++  if(!(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ReactivateProfile -ActivationTimeoutMilliseconds 0) -or
++    $script:launchCalls -ne 1 -or $script:restoreCalls -ne $beforeRestore+1){throw "Renderer-hidden recovery did not dispatch exactly one strict normal profile activation: $case"}
++}
++foreach($case in @('pid','start','post-pid','post-start','post-session','post-browser','post-browser-id','ambiguous-hidden','ambiguous-new')){
++  $script:identityCalls=0;$script:change=$case;$script:windows=@([IntPtr]111);$script:allWindows=@([IntPtr]111);$script:launchCalls=0;$script:launchMode='visible';$script:uuid='reviewed-browser'
++  if($case -eq 'ambiguous-hidden'){$script:allWindows+= [IntPtr]222}
++  if($case -eq 'ambiguous-new'){$script:launchMode='ambiguous'}
++  $beforeRestore=$script:restoreCalls
++  if(Invoke-DreamSkinCodexWindowActivation -Codex $codex -Port 9335 -BrowserId 'reviewed-browser' -ProfilePath $profile -ReactivateProfile -ActivationTimeoutMilliseconds 0){throw "Normal profile reactivation bypassed identity or HWND ambiguity: $case"}
++  if($script:restoreCalls -ne $beforeRestore -or $script:launchCalls -gt 1){throw "Unsafe recovery restored a replaced/ambiguous window or retried startup: $case"}
++}
++$script:uuid='reviewed-browser'
 +foreach($case in @('post-pid','post-start','post-browser','ambiguous-hidden','ambiguous-new','no-new-window')){
 +  $script:identityCalls=0;$script:change=$case;$script:windows=@();$script:allWindows=@();$script:launchCalls=0;$script:launchMode='visible'
 +  if($case -eq 'ambiguous-hidden'){$script:allWindows=@([IntPtr]111,[IntPtr]222)}
@@ -4708,7 +5293,7 @@ index 0000000..f776e94
 +if(!$probe.usableVerifiedCdp -or $probe.ownerProcessId -ne 10 -or $script:launchCalls -ne 0 -or $script:stopCalls -ne 0){
 +  throw 'Windowless preflight failed or performed an app/window operation'
 +}
-+Write-Output 'PASS: managed activation pins profile/browser/PID/start and one HWND; windowless reopening is scoped and stop-free; preflight is read-only; no real window actions.'
++Write-Output 'PASS: auxiliary HWNDs are excluded; exact hidden HWND restoration and windowless activation remain scoped and stop-free; preflight is read-only; no real window actions.'
 diff --git a/windows/tests/run-tests.ps1 b/windows/tests/run-tests.ps1
 index da22c48..802ce1a 100644
 --- a/windows/tests/run-tests.ps1
@@ -4828,10 +5413,18 @@ index 0000000..4657bcb
 +  }
 +});
 diff --git a/windows/tests/start-renderer-readiness.tests.ps1 b/windows/tests/start-renderer-readiness.tests.ps1
-index 53bd4e1..8682388 100644
+index 53bd4e1..b5d0881 100644
 --- a/windows/tests/start-renderer-readiness.tests.ps1
 +++ b/windows/tests/start-renderer-readiness.tests.ps1
-@@ -59,6 +59,7 @@ function Exit-DreamSkinOperationLock {
+@@ -49,6 +49,7 @@ $script:appearanceInstallCalls = 0
+ $script:appearanceRestoreCalls = 0
+ $script:codexStopped = $false
+ $script:codexStarted = $false
++$script:lifecycleEvents = @()
+ 
+ function Enter-DreamSkinOperationLock {
+   param([int]$TimeoutMilliseconds)
+@@ -59,6 +60,7 @@ function Exit-DreamSkinOperationLock {
    if ($Mutex -eq 'mock-lock') { $script:lockExited = $true }
  }
  function Assert-DreamSkinPort { param([int]$Port) }
@@ -4839,7 +5432,7 @@ index 53bd4e1..8682388 100644
  function Get-DreamSkinNodeRuntime {
    return [pscustomobject]@{ Path = 'mock-node.exe'; Version = '22.23.1' }
  }
-@@ -97,6 +98,7 @@ function Get-DreamSkinVerifiedCdpIdentity {
+@@ -97,6 +99,7 @@ function Get-DreamSkinVerifiedCdpIdentity {
    return [pscustomobject]@{ BrowserId = 'fixture-browser' }
  }
  function Get-DreamSkinVerifiedCdpIdentityForAnyRegistered { param([int]$Port); return $null }
@@ -4847,6 +5440,64 @@ index 53bd4e1..8682388 100644
  function Test-DreamSkinPortAvailable { param([int]$Port); return $true }
  function Get-DreamSkinActiveThemeAppearance { param([string]$ThemeDirectory); return 'dark' }
  function Install-DreamSkinBaseTheme {
+@@ -116,6 +119,7 @@ function Complete-DreamSkinAppearanceTransaction { param([string]$BackupPath, [o
+ function Start-DreamSkinCodexForDebugging {
+   param([object]$Codex, [string[]]$Arguments, [int]$Port, [int[]]$PreserveProcessIds)
+   $script:cdpReady = $true
++  $script:lifecycleEvents += 'debug-launch'
+   return [pscustomobject]@{ Strategy = 'package-activation' }
+ }
+ function Stop-DreamSkinCodex {
+@@ -130,7 +134,12 @@ function Start-DreamSkinCodex {
+ }
+ function Stop-DreamSkinRecordedInjector { param([object]$State); return $true }
+ function Set-DreamSkinPaused { param([bool]$Paused, [string]$StateRoot); return $true }
+-function Invoke-DreamSkinCodexWindowActivation { param([object]$Codex); return $true }
++function Invoke-DreamSkinCodexWindowActivation {
++  param([object]$Codex)
++  if (-not $script:cdpReady) { throw 'Activation ran before a verified CDP endpoint existed.' }
++  $script:lifecycleEvents += 'activate'
++  return $true
++}
+ function ConvertTo-DreamSkinProcessArgument { param([string]$Value); return $Value }
+ function Start-Process {
+   [CmdletBinding()]
+@@ -152,6 +161,10 @@ function Write-DreamSkinState {
+ function Invoke-DreamSkinNative {
+   param([string]$FilePath, [object[]]$ArgumentList, [switch]$DiscardStderr)
+   if ($ArgumentList -contains '--verify') {
++    if ($script:lifecycleEvents -notcontains 'activate') {
++      throw 'Freshly launched Codex remained hidden until a long renderer verification had already begun.'
++    }
++    $script:lifecycleEvents += 'verify'
+     $script:verifyCalls += 1
+     return [pscustomobject]@{ ExitCode = 2; Output = @('{"pass":false}') }
+   }
+@@ -207,13 +220,19 @@ $announcedActive = @($script:hostMessages | Where-Object {
+   $_ -like 'Codex 动态壁纸已激活*'
+ }).Count -gt 0
+ if (-not $failed -or $script:verifyCalls -ne 1 -or $script:onceCalls -ne 1 -or
+-  $script:removeCalls -ne 0 -or $script:appearanceInstallCalls -ne 1 -or
+-  $script:appearanceRestoreCalls -ne 1 -or -not $script:codexStopped -or
+-  -not $script:codexStarted -or
++  $script:removeCalls -ne 1 -or $script:appearanceInstallCalls -ne 1 -or
++  $script:appearanceRestoreCalls -ne 0 -or $script:codexStopped -or
++  $script:codexStarted -or
+   -not $script:stateWritten -or -not $script:stateRemoved -or
+   -not $script:daemonStopped -or -not $script:daemon.HasExited -or
+   -not $script:lockExited -or $announcedActive) {
+-  throw 'A failed renderer readiness check did not stop startup and run the existing rollback path.'
++  throw 'A failed renderer readiness check must fail startup, clean only its injector/live skin and preserve application windows.'
++}
++$launchIndex=[Array]::IndexOf($script:lifecycleEvents,'debug-launch')
++$activateIndex=[Array]::IndexOf($script:lifecycleEvents,'activate')
++$verifyIndex=[Array]::IndexOf($script:lifecycleEvents,'verify')
++if($launchIndex -lt 0 -or $activateIndex -le $launchIndex -or $verifyIndex -le $activateIndex){
++  throw 'Fresh startup must verify its endpoint, restore its window, then begin long renderer verification.'
+ }
+ 
+-Write-Output 'PASS: renderer readiness failure stops Windows startup and clears transient state.'
++Write-Output 'PASS: fresh startup restores its verified window before renderer verification; readiness failure clears transient state.'
 diff --git a/windows/tests/start-result-contract.tests.ps1 b/windows/tests/start-result-contract.tests.ps1
 index b776927..3655e12 100644
 --- a/windows/tests/start-result-contract.tests.ps1
@@ -4889,21 +5540,36 @@ index b776927..3655e12 100644
        $script:startResultStatusCall += 1
        if ($script:startResultStatusCall -eq 1) { return 'protocol-redirected' }
 diff --git a/windows/tests/start-verified-skin-preserved.tests.ps1 b/windows/tests/start-verified-skin-preserved.tests.ps1
-index feeb8f4..90f4378 100644
+index feeb8f4..2335bee 100644
 --- a/windows/tests/start-verified-skin-preserved.tests.ps1
 +++ b/windows/tests/start-verified-skin-preserved.tests.ps1
-@@ -54,7 +54,9 @@ function Invoke-DreamSkinStartupFixture {
+@@ -8,7 +8,8 @@ param([Parameter(Mandatory = $true)][string]$Root)
+ # Codex in that state, taking a working skinned window away from the user and
+ # returning them to the stock appearance about 90 seconds after they applied a
+ # theme (#267). Startup must leave Codex alone when the skin is rendered, and
+-# must still restart it when the renderer reports a genuinely broken session.
++# must report broken sessions without package-wide shutdown, since a normal
++# window may have opened while renderer verification was pending.
+ 
+ $ErrorActionPreference = 'Stop'
+ . (Join-Path $Root 'scripts\localization-windows.ps1')
+@@ -54,7 +55,14 @@ function Invoke-DreamSkinStartupFixture {
      [switch]$SelectTheme,
      [switch]$SupersedeTheme,
      [switch]$WriteThemeFailure,
 -    [switch]$SuccessfulVerification
 +    [switch]$SuccessfulVerification,
 +    [switch]$RestorableManagedWindow,
-+    [switch]$WindowlessManagedBrowser
++    [switch]$WindowlessManagedBrowser,
++    [switch]$NormalBystanderAfterLaunch,
++    [switch]$PendingApplied,
++    [switch]$PendingOwnerChanged,
++    [switch]$PendingOwnerMissing,
++    [switch]$VerificationStderr
    )
  
    $script:daemon = [pscustomobject]@{ Id = 4242; HasExited = $false }
-@@ -65,8 +67,9 @@ function Invoke-DreamSkinStartupFixture {
+@@ -65,22 +73,31 @@ function Invoke-DreamSkinStartupFixture {
    $script:dateCall = 0
    $script:codexStopped = $false
    $script:codexStarted = $false
@@ -4911,19 +5577,63 @@ index feeb8f4..90f4378 100644
 -  $script:codexProcessRunning = [bool]$ReuseExistingCdp
 +  $script:cdpReady = [bool]$ReuseExistingCdp -and -not $WindowlessManagedBrowser
 +  $script:codexProcessRunning = [bool]$ReuseExistingCdp -or [bool]$WindowlessManagedBrowser
++  $script:normalBystanderRunning = $false
 +  $script:windowActivationCalls = 0
++  $script:profileReactivationCalls = 0
    $script:appearanceInstallCalls = 0
    $script:appearanceRestoreCalls = 0
    $script:removeCalls = 0
-@@ -146,7 +149,16 @@ function Invoke-DreamSkinStartupFixture {
++  $script:onceCalls = 0
+   $script:verifyPayloads = @($VerifyPayloads)
+   $script:verifyPayloadIndex = 0
+   $script:oncePayload = $OncePayload
+   $script:lastError = '(no error)'
+   $script:resultAppearanceRecovery = $null
++  $script:resultOutcome = $null
+   $script:restartPromptCalls = 0
+   $script:browserId = 'fixture-browser'
+   $script:themeFingerprint = 'previous'
+   $script:themeWriteCalls = 0
+   $script:themeRestoreCalls = 0
+   $script:snapshotRemoved = $false
++  $script:pendingRemaining = [bool]$PendingApplied
++  $script:pendingOwnerReads = 0
++  $script:pendingPromotionCalls = 0
++  $script:pendingCommits = 0
+ 
+   function Confirm-DreamSkinRestart {
+     param([string]$Message)
+@@ -139,14 +156,37 @@ function Invoke-DreamSkinStartupFixture {
+     return Get-DreamSkinThemePaths -StateRoot $StateRoot
+   }
+   function Test-DreamSkinPaused { param([string]$StateRoot); return $false }
+-  function Test-DreamSkinPendingAppearanceTransaction { param([string]$BackupPath); return $false }
++  function Test-DreamSkinPendingAppearanceTransaction { param([string]$BackupPath); return $script:pendingRemaining }
++  function Get-DreamSkinManagedWindowIdentity {
++    param($Codex,$Port,$BrowserId,$ProfilePath)
++    $script:pendingOwnerReads++
++    if($PendingOwnerMissing){return $null}
++    return [pscustomobject]@{ProcessId=$(if($PendingOwnerChanged -and $script:pendingOwnerReads -gt 1){999}else{909});StartedAt='2026-07-25T00:00:00.0000000Z';SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
++  }
++  function Complete-DreamSkinAppliedPendingAppearanceTransaction {
++    param($ConfigPath,$BackupPath,$ValidateSession,$SessionContext)
++    $script:pendingPromotionCalls++
++    foreach($check in 1..2){if(-not (& $ValidateSession $SessionContext)){return $false}}
++    $script:pendingRemaining=$false;$script:pendingCommits++
++    return $true
++  }
+   function Read-DreamSkinState { param([string]$Path); return $null }
+   function Get-DreamSkinCodexStatePathCandidate { param([object]$State); return $null }
+   function Get-DreamSkinCodexInstallFromState { param([object]$State); return $null }
    function Test-DreamSkinPathEqual { param([string]$Left, [string]$Right); return $true }
    function Stop-DreamSkinRecordedInjector { param([object]$State); return $true }
    function Set-DreamSkinPaused { param([bool]$Paused, [string]$StateRoot); return $true }
 -  function Invoke-DreamSkinCodexWindowActivation { param([object]$Codex); return $true }
 +  function Test-DreamSkinRemoteSession { return $false }
 +  function Invoke-DreamSkinCodexWindowActivation {
-+    param([object]$Codex,[int]$Port,[string]$BrowserId,[string]$ProfilePath)
++    param([object]$Codex,[int]$Port,[string]$BrowserId,[string]$ProfilePath,[switch]$ReactivateProfile)
 +    $script:windowActivationCalls++
++    if($ReactivateProfile){$script:profileReactivationCalls++}
 +    if($WindowlessManagedBrowser -and $RestorableManagedWindow){
 +      $script:cdpReady=$true
 +      if($ChangeIdentityAfterConsent){$script:browserId='replacement-browser'}
@@ -4933,7 +5643,17 @@ index feeb8f4..90f4378 100644
    function ConvertTo-DreamSkinProcessArgument { param([string]$Value); return $Value }
    function Get-DreamSkinProcessStartedAt { param([int]$ProcessId); return '2026-07-25T00:00:00.0000000Z' }
    function Write-DreamSkinState { param([string]$Path, [object]$State) }
-@@ -162,9 +174,14 @@ function Invoke-DreamSkinStartupFixture {
+@@ -156,15 +196,22 @@ function Invoke-DreamSkinStartupFixture {
+   # That is the branch that used to force-restart on any verify failure.
+   function Get-DreamSkinCodexProcesses {
+     param([object]$Codex)
+-    if ($script:codexProcessRunning) { return @([pscustomobject]@{ ProcessId = 909 }) }
+-    return @()
++    $processes=@()
++    if ($script:codexProcessRunning) { $processes += [pscustomobject]@{ ProcessId = 909 } }
++    if ($script:normalBystanderRunning) { $processes += [pscustomobject]@{ ProcessId = 5988 } }
++    return $processes
+   }
    function Get-DreamSkinVerifiedCdpIdentity {
      param([int]$Port, [object]$Codex)
      if (-not $script:cdpReady) { return $null }
@@ -4949,15 +5669,84 @@ index feeb8f4..90f4378 100644
    function Test-DreamSkinPortAvailable { param([int]$Port); return $true }
    function Get-DreamSkinActiveThemeAppearance { param([string]$ThemeDirectory); return 'dark' }
    function Install-DreamSkinBaseTheme {
-@@ -295,6 +312,7 @@ function Invoke-DreamSkinStartupFixture {
+@@ -185,6 +232,7 @@ function Invoke-DreamSkinStartupFixture {
+     param([object]$Codex, [string[]]$Arguments, [int]$Port, [int[]]$PreserveProcessIds)
+     $script:cdpReady = $true
+     $script:codexProcessRunning = $true
++    $script:normalBystanderRunning = [bool]$NormalBystanderAfterLaunch
+     return [pscustomobject]@{ Strategy = 'package-activation' }
+   }
+   function Stop-DreamSkinCodex {
+@@ -192,6 +240,7 @@ function Invoke-DreamSkinStartupFixture {
+     $script:codexStopped = $true
+     $script:cdpReady = $false
+     $script:codexProcessRunning = $false
++    if ($PreserveProcessIds -notcontains 5988) { $script:normalBystanderRunning = $false }
+   }
+   function Start-DreamSkinCodex {
+     param([object]$Codex)
+@@ -209,6 +258,7 @@ function Invoke-DreamSkinStartupFixture {
+       [string]$Category, [string]$AppearanceRecovery
+     )
+     $script:resultAppearanceRecovery = $AppearanceRecovery
++    $script:resultOutcome = $Outcome
+   }
+ 
+   function Invoke-DreamSkinNative {
+@@ -218,9 +268,12 @@ function Invoke-DreamSkinStartupFixture {
+       $index = [Math]::Min($script:verifyPayloadIndex, $script:verifyPayloads.Count - 1)
+       $script:verifyPayloadIndex += 1
+       $verifyCode = if ($SuccessfulVerification) { 0 } else { 2 }
++      if($VerificationStderr){return [pscustomobject]@{ExitCode=$verifyCode;Output=@('[dream-skin] compat profile not applied: revision-not-newer',$script:verifyPayloads[$index]);StandardOutput=@($script:verifyPayloads[$index]);StandardError=@('[dream-skin] compat profile not applied: revision-not-newer')}}
+       return [pscustomobject]@{ ExitCode = $verifyCode; Output = @($script:verifyPayloads[$index]) }
+     }
+     if ($ArgumentList -contains '--once') {
++      $script:onceCalls++
++      if($VerificationStderr){return [pscustomobject]@{ExitCode=2;Output=@('[dream-skin] diagnostic',$script:oncePayload);StandardOutput=@($script:oncePayload);StandardError=@('[dream-skin] diagnostic')}}
+       return [pscustomobject]@{ ExitCode = 2; Output = @($script:oncePayload) }
+     }
+     if ($ArgumentList -contains '--remove') {
+@@ -289,12 +342,20 @@ function Invoke-DreamSkinStartupFixture {
+     AppearanceRestoreCalls = $script:appearanceRestoreCalls
+     RemoveCalls = $script:removeCalls
+     ResultAppearanceRecovery = $script:resultAppearanceRecovery
++    ResultOutcome = $script:resultOutcome
++    NormalBystanderRunning = $script:normalBystanderRunning
+     LastError = $script:lastError
+     RestartPromptCalls = $script:restartPromptCalls
+     ThemeFingerprint = $script:themeFingerprint
      ThemeWriteCalls = $script:themeWriteCalls
      ThemeRestoreCalls = $script:themeRestoreCalls
      SnapshotRemoved = $script:snapshotRemoved
 +    WindowActivationCalls = $script:windowActivationCalls
++    ProfileReactivationCalls = $script:profileReactivationCalls
++    PendingPromotionCalls = $script:pendingPromotionCalls
++    PendingCommits = $script:pendingCommits
++    VerifyCalls = $script:verifyPayloadIndex
++    OnceCalls = $script:onceCalls
    }
  }
  
-@@ -320,7 +338,7 @@ $malformedPayload = '{not-json'
+@@ -317,14 +378,31 @@ $hiddenPayload = @'
+ '@
+ $malformedPayload = '{not-json'
+ 
++$pendingReuse=Invoke-DreamSkinStartupFixture -VerifyPayloads @($renderedPayload) -OncePayload $renderedPayload `
++  -ReuseExistingCdp -PendingApplied -SuccessfulVerification -RestorableManagedWindow
++if($pendingReuse.LastError -cne '(no error)' -or $pendingReuse.PendingCommits -ne 1 -or $pendingReuse.VerifyCalls -lt 1 -or
++  $pendingReuse.CodexStopped -or $pendingReuse.CodexStarted -or $pendingReuse.AppearanceInstallCalls -ne 0){throw 'A fully applied pending transaction did not reuse its exact live session and continue renderer verification.'}
++foreach($case in @('changed','missing')){
++  $pendingRejected=Invoke-DreamSkinStartupFixture -VerifyPayloads @($renderedPayload) -OncePayload $renderedPayload `
++    -ReuseExistingCdp -PendingApplied -PendingOwnerChanged:($case -ceq 'changed') -PendingOwnerMissing:($case -ceq 'missing')
++  if($pendingRejected.LastError -notlike '*without a verified Dream Skin CDP endpoint*' -or $pendingRejected.PendingCommits -ne 0 -or
++    $pendingRejected.CodexStopped -or $pendingRejected.CodexStarted -or $pendingRejected.VerifyCalls -ne 0 -or
++    ($case -ceq 'missing' -and $pendingRejected.PendingPromotionCalls -ne 0)){throw "A replaced/missing pending-session owner bypassed existing recovery requirements: $case"}
++}
++$pendingButBroken=Invoke-DreamSkinStartupFixture -VerifyPayloads @($hiddenPayload,$malformedPayload) -OncePayload $hiddenPayload `
++  -ReuseExistingCdp -PendingApplied -WithResultToken
++if(-not $pendingButBroken.Failed -or $pendingButBroken.PendingCommits -ne 1 -or $pendingButBroken.ResultOutcome -cne 'failure' -or
++  $pendingButBroken.CodexStopped -or $pendingButBroken.CodexStarted){throw 'Committing pending config ownership was treated as renderer success.'}
++
  $rendered = Invoke-DreamSkinStartupFixture `
    -VerifyPayloads @($renderedPayload, $malformedPayload) -OncePayload $malformedPayload
  if (-not $rendered.Failed) {
@@ -4966,7 +5755,47 @@ index feeb8f4..90f4378 100644
  }
  if ($rendered.CodexStopped -or $rendered.CodexStarted) {
    throw 'Startup force-restarted Codex even though the renderer reported a visible, structurally complete skin.'
-@@ -382,6 +400,14 @@ if ($promptedHidden.RestartPromptCalls -ne 1 -or -not $promptedHidden.CodexStopp
+ }
++if($rendered.ProfileReactivationCalls -ne 0){throw 'A visible renderer triggered normal profile reactivation.'}
+ if ($rendered.AppearanceInstallCalls -ne 1 -or $rendered.AppearanceRestoreCalls -ne 0) {
+   throw 'Rendered-but-unverified startup did not retain its applied appearance transaction.'
+ }
+@@ -347,9 +425,31 @@ if (-not $communityRendered.Failed -or -not $communityRendered.CodexStopped -or
+ 
+ $broken = Invoke-DreamSkinStartupFixture `
+   -VerifyPayloads @($hiddenPayload, $malformedPayload) -OncePayload $hiddenPayload
+-if (-not $broken.Failed -or -not $broken.CodexStopped -or -not $broken.CodexStarted -or
+-  $broken.AppearanceRestoreCalls -ne 1) {
+-  throw 'A genuinely hidden renderer no longer closes Codex and restores appearance.'
++if (-not $broken.Failed -or $broken.CodexStopped -or $broken.CodexStarted -or
++  $broken.AppearanceRestoreCalls -ne 0 -or $broken.RemoveCalls -ne 1 -or $broken.ProfileReactivationCalls -ne 1) {
++  throw 'A genuinely hidden renderer must fail startup without closing application windows or claiming appearance recovery.'
++}
++$stillHiddenAfterActivation=Invoke-DreamSkinStartupFixture -VerifyPayloads @($hiddenPayload,$hiddenPayload) -OncePayload $hiddenPayload `
++  -ReuseExistingCdp -RestorableManagedWindow -WithResultToken
++if(-not $stillHiddenAfterActivation.Failed -or $stillHiddenAfterActivation.ProfileReactivationCalls -ne 1 -or
++  $stillHiddenAfterActivation.ResultOutcome -cne 'failure' -or $stillHiddenAfterActivation.VerifyCalls -lt 1 -or $stillHiddenAfterActivation.OnceCalls -ne 1 -or
++  $stillHiddenAfterActivation.CodexStopped -or $stillHiddenAfterActivation.CodexStarted){throw 'Successful OS restoration/profile activation bypassed still-hidden renderer verification or retried profile activation.'}
++$stderrHidden=Invoke-DreamSkinStartupFixture -VerifyPayloads @($hiddenPayload,$hiddenPayload) -OncePayload $hiddenPayload `
++  -ReuseExistingCdp -RestorableManagedWindow -WithResultToken -VerificationStderr
++if(-not $stderrHidden.Failed -or $stderrHidden.ProfileReactivationCalls -ne 1 -or $stderrHidden.ResultOutcome -cne 'failure' -or
++  $stderrHidden.CodexStopped -or $stderrHidden.CodexStarted){throw 'Native diagnostic stderr prevented the lifecycle from recognizing strict hidden-renderer stdout.'}
++$stderrRendered=Invoke-DreamSkinStartupFixture -VerifyPayloads @($renderedPayload,$malformedPayload) -OncePayload $malformedPayload -VerificationStderr
++if(-not $stderrRendered.Failed -or $stderrRendered.RemoveCalls -ne 0 -or $stderrRendered.ProfileReactivationCalls -ne 0 -or
++  $stderrRendered.CodexStopped -or $stderrRendered.CodexStarted){throw 'Native stderr prevented positive renderer stdout from being preserved separately from failure diagnostics.'}
++
++$brokenWithNormal = Invoke-DreamSkinStartupFixture `
++  -VerifyPayloads @($hiddenPayload, $malformedPayload) -OncePayload $hiddenPayload `
++  -NormalBystanderAfterLaunch -WithResultToken
++if (-not $brokenWithNormal.Failed -or -not $brokenWithNormal.NormalBystanderRunning -or
++  $brokenWithNormal.CodexStopped -or $brokenWithNormal.CodexStarted -or
++  $brokenWithNormal.AppearanceRestoreCalls -ne 0 -or $brokenWithNormal.RemoveCalls -ne 1 -or
++  $brokenWithNormal.ResultOutcome -cne 'failure' -or $brokenWithNormal.ResultAppearanceRecovery -cne 'blocked') {
++  throw 'Renderer failure closed a late normal window, claimed success or rolled back appearance under a retained session.'
+ }
+ 
+ $reused = Invoke-DreamSkinStartupFixture `
+@@ -382,6 +482,14 @@ if ($promptedHidden.RestartPromptCalls -ne 1 -or -not $promptedHidden.CodexStopp
    $promptedHidden.ThemeFingerprint -cne 'selected' -or -not $promptedHidden.SnapshotRemoved) {
    throw "Hidden manager apply did not recover with consent: $($promptedHidden.LastError)"
  }
@@ -4981,14 +5810,14 @@ index feeb8f4..90f4378 100644
  $declined = Invoke-DreamSkinStartupFixture -VerifyPayloads @($hiddenPayload) `
    -OncePayload $hiddenPayload -ReuseExistingCdp -PromptForRestart -DeclineRestart -SelectTheme
  if ($declined.RestartPromptCalls -ne 1 -or $declined.CodexStopped -or $declined.ThemeWriteCalls -ne 0) {
-@@ -419,6 +445,28 @@ if ($partialWrite.LastError -cne 'fixture-theme-write-failure' -or
+@@ -419,6 +527,28 @@ if ($partialWrite.LastError -cne 'fixture-theme-write-failure' -or
    throw 'A failed theme write was not restored inside its original operation lock.'
  }
  
 +$windowlessReopen = Invoke-DreamSkinStartupFixture -VerifyPayloads @($renderedPayload) `
 +  -OncePayload $renderedPayload -WindowlessManagedBrowser -RestorableManagedWindow -SuccessfulVerification
 +if ($windowlessReopen.Failed -or $windowlessReopen.LastError -cne '(no error)' -or
-+  $windowlessReopen.WindowActivationCalls -ne 1 -or $windowlessReopen.RestartPromptCalls -ne 0 -or
++  $windowlessReopen.WindowActivationCalls -lt 1 -or $windowlessReopen.RestartPromptCalls -ne 0 -or
 +  $windowlessReopen.CodexStopped -or $windowlessReopen.CodexStarted -or $windowlessReopen.AppearanceInstallCalls -ne 0) {
 +  throw "Windowless managed browser was not reopened without restart or config mutation: $($windowlessReopen.LastError)"
 +}

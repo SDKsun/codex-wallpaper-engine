@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch does not apply.' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch failed.' }
 
 $windowsRoot = Join-Path $sourceRoot 'windows'
-foreach ($testName in @('managed-window-activation.tests.ps1','start-renderer-readiness.tests.ps1','start-verified-skin-preserved.tests.ps1')) {
+foreach ($testName in @('managed-window-activation.tests.ps1','config-startup-rollback.tests.ps1','start-renderer-readiness.tests.ps1','start-verified-skin-preserved.tests.ps1')) {
     & (Join-Path $windowsRoot "tests/$testName") -Root $windowsRoot
     if (-not $?) { throw "Windows startup checks failed: $testName" }
 }
@@ -67,8 +67,16 @@ New-Item -ItemType Directory -Path $selfTestRoot | Out-Null
 $previousStateOverride = $env:CODEX_DREAM_SKIN_LOCAL_APPDATA
 try {
     $env:CODEX_DREAM_SKIN_LOCAL_APPDATA = $selfTestRoot
-    & (Join-Path $managerRoot 'CodexDreamSkinManager.exe') --self-test
-    if ($LASTEXITCODE -ne 0) { throw 'Manager self-test failed.' }
+    # A GUI-subsystem executable can return control to Windows PowerShell
+    # before it exits. Check the actual child, not a stale LASTEXITCODE.
+    $managerSelfTest = Start-Process -FilePath (Join-Path $managerRoot 'CodexDreamSkinManager.exe') -ArgumentList '--self-test' -WindowStyle Hidden -PassThru
+    try {
+        if (-not $managerSelfTest.WaitForExit(90000)) {
+            $managerSelfTest.Kill()
+            throw 'Manager self-test timed out.'
+        }
+        if ($managerSelfTest.ExitCode -ne 0) { throw 'Manager self-test failed.' }
+    } finally { $managerSelfTest.Dispose() }
 } finally {
     if ($null -eq $previousStateOverride) { Remove-Item Env:CODEX_DREAM_SKIN_LOCAL_APPDATA -ErrorAction SilentlyContinue }
     else { $env:CODEX_DREAM_SKIN_LOCAL_APPDATA = $previousStateOverride }

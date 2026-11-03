@@ -6,7 +6,7 @@ Local Wallpaper Engine backgrounds and configurable glass UI for managed Windows
 
 **The project combines a control plugin and an external window adapter. An optional resident assistant keeps the original Codex entry: it detects a newly opened ordinary visible window, reopens the application and loads the saved appearance. A brief window restart may be visible. This is not a host-native theme extension; the assistant requires separate opt-in.**
 
-As of 2026-10-29, Codex 26.1021.3705.0 was verified after all application background processes exited: launching the original official application entry let the assistant restore a playing 4K video, mascot and glass effects, with wallpaper settings unchanged. See [Compatibility](docs/COMPATIBILITY.md) for the validation scope and limitations.
+On 2026-11-03, recovery of a failed Codex 26.1021.3705.0 session was verified in the real application: full wallpaper coverage, a Scene running at about 30 FPS, mascot and glass, with existing windows and settings preserved. A complete exit and reopening with these changes remains to be validated. See [Compatibility](docs/COMPATIBILITY.md) for historical startup results and current scope.
 
 This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](https://github.com/elysia395/dsh-wallpaper-engine), using a local service and a scoped native-window bridge. Its Windows launcher is based on [Codex Dynamic Skin](https://github.com/CCDawn/Codex-Dynamic-Skin). It is independent of OpenAI, Valve and the upstream projects.
 
@@ -24,6 +24,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - Restores the verified managed wallpaper window when multiple Codex instances exist; background output does not block the manager's startup result.
 - An optional separate launcher restores the local resource service and attempts to load the saved appearance; its entries coexist with the official application entry.
 - An optional resident assistant reattaches decoration after an ordinary launch, with tray pause/resume/disable controls and restoration of its login startup entry on uninstall.
+- Native wallpaper framing always covers the window; ordinary zoom-out and panning cannot expose the window base, while saved framing values are retained.
 
 ## Supported scope
 

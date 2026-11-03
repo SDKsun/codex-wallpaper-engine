@@ -121,6 +121,30 @@ test('launcher preserves non-ANSI Unicode targets in a stable payload and correc
   assert.ok((await fs.stat(result.managerPath)).isFile(),'uninstall retains payloads that may still be running');
 });
 
+test('launcher resolves its default payload root when invoked from scripts in Windows PowerShell',windows,async t=>{
+  const f=await fixture(t,{unicode:true});
+  const copiedInstaller=path.join(f.plugin,'scripts','install-launcher.ps1');
+  await fs.copyFile(installer,copiedInstaller);
+  // Exercise ordinary documented invocation without -PluginRoot. Both launch
+  // directories and all state remain under this fixture, even if binding fails.
+  // A different cwd proves the default belongs to the script, not the caller.
+  async function invoke(action){
+    const {stdout}=await f.command(`$ErrorActionPreference='Stop'\nfunction global:Get-AppxPackage { @() }\nSet-Location -LiteralPath ${quote(f.root)}\n& ${quote(copiedInstaller)} -Action ${action} -StateRoot ${quote(f.state)} -DesktopDirectory ${quote(f.desktop)} -ProgramsDirectory ${quote(f.programs)} -TaskbarDirectory ${quote(f.taskbar)} -ApplicationId ${quote(f.appId)}`);
+    return JSON.parse(stdout.trim().replace(/^\uFEFF/,''));
+  }
+  const installed=await invoke('Install');
+  assert.equal(installed.ok,true);
+  assert.equal(installed.installedPath,path.join(f.state,'GPTWallpaper','installed',installed.contentId));
+  assert.equal(await fs.readFile(path.join(installed.installedPath,'scripts','server.mjs'),'utf8'),'export const fixture=true;');
+  assert.deepEqual(installed.shortcuts.map(item=>path.dirname(item)),[f.desktop,f.programs]);
+  assert.equal((await f.manifest()).applicationId,f.appId);
+  assert.deepEqual(await fs.readdir(f.taskbar),[],'default invocation never creates a taskbar pin');
+  const removed=await invoke('Uninstall');
+  assert.equal(removed.restored.length,2);
+  for(const directory of [f.desktop,f.programs])assert.deepEqual(await fs.readdir(directory),[]);
+  await assert.rejects(fs.stat(path.join(f.state,'GPTWallpaper','launcher-install.json')),{code:'ENOENT'});
+});
+
 test('launcher refuses a private same-name shortcut before changing any entry',windows,async t=>{
   const f=await fixture(t);
   const privateLink=path.join(f.desktop,'Codex.lnk');

@@ -33,6 +33,8 @@ namespace CodexWallpaperAssistant {
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam);
+    [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hwnd, int command);
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hwnd);
     public static string[] Arguments(string line) {
       int count; IntPtr memory=CommandLineToArgvW(line, out count);
       if(memory==IntPtr.Zero || count<1 || count>128) throw new InvalidOperationException("Invalid process arguments.");
@@ -48,9 +50,9 @@ namespace CodexWallpaperAssistant {
         return new ProcessIdentity { StartedAt=DateTime.FromFileTimeUtc(created).ToString("o"),Executable=image.ToString() };
       } finally { CloseHandle(handle); }
     }
-    private static bool Owned(IntPtr hwnd, uint process) {
+    private static bool Owned(IntPtr hwnd, uint process, bool requireVisible=true) {
       uint owner;GetWindowThreadProcessId(hwnd,out owner);
-      if(owner!=process || !IsWindow(hwnd) || GetWindow(hwnd,4)!=IntPtr.Zero || (!IsWindowVisible(hwnd)&&!IsIconic(hwnd)))return false;
+      if(owner!=process || !IsWindow(hwnd) || GetWindow(hwnd,4)!=IntPtr.Zero || (requireVisible&&!IsWindowVisible(hwnd)&&!IsIconic(hwnd)))return false;
       var name=new StringBuilder(256);GetClassName(hwnd,name,name.Capacity);
       return name.ToString()=="Chrome_WidgetWin_1";
     }
@@ -60,6 +62,17 @@ namespace CodexWallpaperAssistant {
     }
     public static bool Close(long window,int process) {
       var hwnd=new IntPtr(window);return Owned(hwnd,(uint)process)&&PostMessage(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero);
+    }
+    public static bool Restore(int process) {
+      var windows=new List<IntPtr>();Callback callback=(hwnd,data)=>{if(Owned(hwnd,(uint)process,false))windows.Add(hwnd);return true;};
+      EnumWindows(callback,IntPtr.Zero);GC.KeepAlive(callback);
+      if(windows.Count!=1 || !ShowWindowAsync(windows[0],9))return false;
+      SetForegroundWindow(windows[0]);
+      for(int attempt=0;attempt<8;attempt++) {
+        if(Owned(windows[0],(uint)process)&&IsWindowVisible(windows[0]))return true;
+        System.Threading.Thread.Sleep(25);
+      }
+      return false;
     }
   }
 }
@@ -187,6 +200,14 @@ function Get-WallpaperAssistantContext {
   return [pscustomobject]@{installations=$installations;processes=$processes;roots=$roots;sessionId=$session}
 }
 
+function Get-WallpaperAssistantRegisteredProcessCount($Context) {
+  $count=0
+  foreach($process in @($Context.processes)){
+    if($process.sessionId -eq $Context.sessionId -and (-not $process.executable -or @($Context.installations|Where-Object { Test-WallpaperAssistantPath $_.executable $process.executable }).Count)){$count++}
+  }
+  return $count
+}
+
 function Enter-WallpaperAssistantOperation {
   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
   $mutex = New-Object Threading.Mutex($false, "Local\CodexDreamSkin.$sid.Operation")
@@ -234,9 +255,45 @@ function Get-WallpaperAssistantCapturedTree($Root, $Processes) {
   return $captured
 }
 
-function Test-WallpaperAssistantScope($Context, $Root, $Captured) {
+function Expand-WallpaperAssistantCapturedTree($Context, $Root, $Captured) {
+  # Chromium starts renderers and utilities while the assistant takes its next
+  # snapshot. Enrol only typed children whose exact, still-live parent belongs
+  # to this capture; a numeric parent PID alone never proves ancestry.
+  $tree=@($Captured)
+  foreach($captured in $tree){
+    $live=@($Context.processes|Where-Object { $_.processId -eq $captured.process.processId })
+    if($live.Count -gt 1 -or ($live.Count -eq 1 -and -not (Test-WallpaperAssistantIdentity $captured.process $live[0]))){return [pscustomobject]@{captured=$tree;reason='identity_changed'}}
+  }
+  for($iteration=0;$iteration -lt 32;$iteration++){
+    $ids=@($tree|ForEach-Object { $_.process.processId })
+    $children=@($Context.processes|Where-Object { $_.parentId -in $ids -and $_.processId -notin $ids })
+    if(-not $children.Count){return [pscustomobject]@{captured=$tree;reason=$null}}
+    foreach($child in $children){
+      $parent=@($tree|Where-Object { $_.process.processId -eq $child.parentId })
+      $liveParent=@($Context.processes|Where-Object { $_.processId -eq $child.parentId })
+      $arguments=@($child.arguments)
+      $types=@($arguments|Where-Object { $_ -ceq '--type' -or $_.StartsWith('--type=',[StringComparison]::Ordinal) })
+      if($parent.Count -ne 1 -or $liveParent.Count -ne 1 -or -not (Test-WallpaperAssistantIdentity $parent[0].process $liveParent[0]) -or
+         $parent[0].depth -ge 32 -or $child.identityVerified -ne $true -or $child.sessionId -ne $Root.sessionId -or
+         -not (Test-WallpaperAssistantPath $child.executable $Root.executable) -or $arguments.Count -lt 2 -or
+         -not (Test-WallpaperAssistantPath $arguments[0] $child.executable) -or $types.Count -ne 1 -or
+         $types[0] -cnotin @('--type=renderer','--type=gpu-process','--type=utility') -or
+         -not $child.startedAt -or $child.startedAt -clt $parent[0].process.startedAt){return [pscustomobject]@{captured=$tree;reason='tree_changed'}}
+      $tree+=[pscustomobject]@{process=$child;depth=($parent[0].depth+1)}
+      if($tree.Count -gt 128){return [pscustomobject]@{captured=$tree;reason='tree_changed'}}
+    }
+  }
+  return [pscustomobject]@{captured=$tree;reason='tree_changed'}
+}
+
+function Test-WallpaperAssistantOperationWindow($Root, [datetime]$Deadline=[datetime]::MinValue) {
+  if($Deadline -eq [datetime]::MinValue){return (Test-WallpaperAssistantFresh $Root)}
+  return (Get-WallpaperAssistantNow) -le $Deadline
+}
+
+function Test-WallpaperAssistantScope($Context, $Root, $Captured, [datetime]$Deadline=[datetime]::MinValue) {
   if(-not (Test-WallpaperAssistantConsent)){return 'consent_revoked'}
-  if(-not (Test-WallpaperAssistantFresh $Root)){return 'too_old'}
+  if(-not (Test-WallpaperAssistantOperationWindow $Root $Deadline)){return $(if($Deadline -eq [datetime]::MinValue){'too_old'}else{'operation_expired'})}
   if (-not @($Context.installations).Count -or -not (Test-WallpaperAssistantPath $Context.installations[0].executable $Root.executable)) { return 'registration_changed' }
   if (@($Context.roots | Where-Object { $_.processId -ne $Root.processId -and $_.kind -cne 'managed' }).Count) { return 'ambiguous_roots' }
   $live = @($Context.processes | Where-Object { $_.processId -eq $Root.processId })
@@ -244,7 +301,7 @@ function Test-WallpaperAssistantScope($Context, $Root, $Captured) {
   if ($live.Count -eq 1) {
     $record = @($Context.roots | Where-Object { $_.processId -eq $Root.processId })
     if ($record.Count -ne 1 -or $record[0].kind -cne 'normal' -or -not $record[0].plainLaunch) { return 'not_plain' }
-    if ($record[0].ageSeconds -lt 0 -or $record[0].ageSeconds -gt 15) { return 'too_old' }
+    if ($Deadline -eq [datetime]::MinValue -and ($record[0].ageSeconds -lt 0 -or $record[0].ageSeconds -gt 15)) { return 'too_old' }
     # Our own WM_CLOSE can hide the last window while Chromium is exiting.
     # Visibility is required before that request, not after it.
   }
@@ -255,6 +312,14 @@ function Test-WallpaperAssistantScope($Context, $Root, $Captured) {
     if($matches.Count -gt 1 -or ($matches.Count -eq 1 -and -not (Test-WallpaperAssistantIdentity $captured.process $matches[0]))){return 'identity_changed'}
   }
   return $null
+}
+
+function Get-WallpaperAssistantTakeoverContext($Root, $Captured, [datetime]$Deadline=[datetime]::MinValue) {
+  $context=Get-WallpaperAssistantContext
+  $expanded=Expand-WallpaperAssistantCapturedTree $context $Root $Captured
+  $reason=$expanded.reason
+  if(-not $reason){$reason=Test-WallpaperAssistantScope $context $Root $expanded.captured $Deadline}
+  return [pscustomobject]@{context=$context;captured=@($expanded.captured);reason=$reason}
 }
 
 function Get-WallpaperAssistantPinnedProcess($Expected) {
@@ -280,58 +345,92 @@ function Request-WallpaperAssistantClose($Expected) {
   } finally { $process.Dispose() }
 }
 
-function Stop-WallpaperAssistantCaptured($Expected,$Root) {
+function Stop-WallpaperAssistantCaptured($Expected,$Root,[datetime]$Deadline=[datetime]::MinValue) {
   $process = Get-WallpaperAssistantPinnedProcess $Expected
   if (-not $process) { return $false }
-  try { if(-not (Test-WallpaperAssistantConsent) -or -not (Test-WallpaperAssistantFresh $Root)){return $false};$process.Kill();return $true } finally { $process.Dispose() }
+  try { if(-not (Test-WallpaperAssistantConsent) -or -not (Test-WallpaperAssistantOperationWindow $Root $Deadline)){return $false};$process.Kill();return $true } finally { $process.Dispose() }
+}
+
+function Restore-WallpaperAssistantWindow($Expected) {
+  # Undo our own close request only for the same pinned browser identity. Never
+  # activate another root or start an application as a generic recovery step.
+  $process=Get-WallpaperAssistantPinnedProcess $Expected
+  if(-not $process){return $false}
+  try{return [CodexWallpaperAssistant.Native]::Restore($Expected.processId)}finally{$process.Dispose()}
 }
 
 function Invoke-WallpaperAssistantTakeover([int]$ProcessId, [string]$StartedAt, [ValidateRange(0,3000)][int]$GraceMilliseconds=3000, [ValidateRange(0,2000)][int]$SettleMilliseconds=1500) {
-  $result = [ordered]@{schema=1;closed=$false;takenOver=$false;processId=$ProcessId;startedAt=$StartedAt}
+  $result = [ordered]@{schema=1;closed=$false;takenOver=$false;processId=$ProcessId;startedAt=$StartedAt;closeRequested=$false;windowRestored=$false}
   $mutex = Enter-WallpaperAssistantOperation
   if (-not $mutex) { $result.reason='operation_busy';return $result }
+  $root=$null
   try {
     $context = Get-WallpaperAssistantContext
     $reason = Get-WallpaperAssistantEligibility $context $ProcessId $StartedAt
     if ($reason) { $result.reason=$reason;return $result }
     $root = @($context.processes | Where-Object processId -eq $ProcessId)[0]
+    # Freshness is an admission check. Once this exact new root has accepted
+    # WM_CLOSE, allow a bounded cleanup rather than abandoning it when its age
+    # crosses 15 seconds midway through shutdown.
+    $operationDeadline=(Get-WallpaperAssistantNow).AddSeconds(20)
     $tree = @(Get-WallpaperAssistantCapturedTree $root $context.processes)
-    $context=Get-WallpaperAssistantContext
-    $reason=Test-WallpaperAssistantScope $context $root $tree
-    if($reason){$result.reason=$reason;return $result}
+    for($stabilize=0;$stabilize -lt 3;$stabilize++){
+      $previousCount=$tree.Count
+      $checked=Get-WallpaperAssistantTakeoverContext $root $tree
+      $context=$checked.context;$tree=@($checked.captured)
+      if($checked.reason){$result.reason=$checked.reason;return $result}
+      if($tree.Count -eq $previousCount){break}
+      if($stabilize -eq 2){$result.reason='tree_changed';return $result}
+      Wait-WallpaperAssistantDelay
+    }
     if (-not (Request-WallpaperAssistantClose $root)) { $result.reason=$(if(-not (Test-WallpaperAssistantConsent)){'consent_revoked'}else{'close_refused'});return $result }
+    $result.closeRequested=$true
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($watch.ElapsedMilliseconds -lt $GraceMilliseconds) {
-      $context = Get-WallpaperAssistantContext
-      $reason = Test-WallpaperAssistantScope $context $root $tree
-      if ($reason) { $result.reason=$reason;return $result }
+      $checked=Get-WallpaperAssistantTakeoverContext $root $tree $operationDeadline
+      $context=$checked.context;$tree=@($checked.captured)
+      if ($checked.reason) { $result.reason=$checked.reason;return $result }
       if (-not @($context.processes | Where-Object { $_.processId -in @($tree | ForEach-Object { $_.process.processId }) }).Count) { break }
       Wait-WallpaperAssistantDelay
     }
-    # Stop the captured browser root first after its close grace. Stopping a
-    # renderer/GPU first can make the still-live browser respawn an uncaptured
-    # child; no new process is ever added to this takeover's stop set.
-    foreach ($captured in @($tree | Sort-Object depth)) {
-      $context = Get-WallpaperAssistantContext
-      $reason = Test-WallpaperAssistantScope $context $root $tree
-      if ($reason) { $result.reason=$reason;return $result }
+    # Stop the browser first so it cannot keep spawning children. Only exact
+    # identities captured through live, verified parentage enter the stop set.
+    while($true){
+      $checked=Get-WallpaperAssistantTakeoverContext $root $tree $operationDeadline
+      $context=$checked.context;$tree=@($checked.captured)
+      if ($checked.reason) { $result.reason=$checked.reason;return $result }
+      $captured=@($tree|Sort-Object depth|Where-Object { $_.process.processId -in @($context.processes|ForEach-Object processId) }|Select-Object -First 1)
+      if(-not $captured.Count){break}
+      $captured=$captured[0]
       $live = @($context.processes | Where-Object { $_.processId -eq $captured.process.processId })
-      if (-not $live.Count) { continue }
       if ($live.Count -ne 1 -or -not (Test-WallpaperAssistantIdentity $captured.process $live[0])) { $result.reason='identity_changed';return $result }
-      if (-not (Stop-WallpaperAssistantCaptured $captured.process $root)) { $result.reason=$(if(-not (Test-WallpaperAssistantConsent)){'consent_revoked'}else{'stop_refused'});return $result }
+      if (-not (Stop-WallpaperAssistantCaptured $captured.process $root $operationDeadline)) { $result.reason=$(if(-not (Test-WallpaperAssistantConsent)){'consent_revoked'}else{'stop_refused'});return $result }
+      $wait=[Diagnostics.Stopwatch]::StartNew()
+      do {
+        $checked=Get-WallpaperAssistantTakeoverContext $root $tree $operationDeadline
+        $context=$checked.context;$tree=@($checked.captured)
+        if($checked.reason){$result.reason=$checked.reason;return $result}
+        if(-not @($context.processes|Where-Object processId -eq $captured.process.processId).Count){break}
+        if($wait.ElapsedMilliseconds -ge $SettleMilliseconds){$result.reason='still_running';return $result}
+        Wait-WallpaperAssistantDelay
+      }while($true)
     }
     $watch.Restart()
     do {
-      $context = Get-WallpaperAssistantContext
-      $reason = Test-WallpaperAssistantScope $context $root $tree
-      if ($reason) { $result.reason=$reason;return $result }
+      $checked=Get-WallpaperAssistantTakeoverContext $root $tree $operationDeadline
+      $context=$checked.context;$tree=@($checked.captured)
+      if ($checked.reason) { $result.reason=$checked.reason;return $result }
       $remaining = @($context.processes | Where-Object { $_.processId -in @($tree | ForEach-Object { $_.process.processId }) })
       if (-not $remaining.Count) { $result.closed=$true;$result.takenOver=$true;return $result }
       if ($watch.ElapsedMilliseconds -ge $SettleMilliseconds) { break }
       Wait-WallpaperAssistantDelay
     } while ($true)
     $result.reason='still_running';return $result
-  } finally { Exit-WallpaperAssistantOperation $mutex }
+  } catch { $result.reason='operation_failed';return $result }
+  finally {
+    if($result.closeRequested -and -not $result.takenOver -and $root){try{$result.windowRestored=[bool](Restore-WallpaperAssistantWindow $root)}catch{}}
+    Exit-WallpaperAssistantOperation $mutex
+  }
 }
 
 # Dot sourcing exposes pure selection/identity helpers for isolated tests only.
@@ -343,7 +442,10 @@ try {
     $busy = -not [bool]$mutex
     if ($mutex) { Exit-WallpaperAssistantOperation $mutex }
     $context = Get-WallpaperAssistantContext
-    [ordered]@{schema=1;operationBusy=$busy;roots=@($context.roots)} | ConvertTo-Json -Depth 5 -Compress
+    # Count typed descendants too: roots.Count==0 alone cannot prove that the
+    # application is fully gone before a fallback launch.
+    $registeredCount=Get-WallpaperAssistantRegisteredProcessCount $context
+    [ordered]@{schema=1;operationBusy=$busy;registeredProcessCount=$registeredCount;roots=@($context.roots)} | ConvertTo-Json -Depth 5 -Compress
   } else {
     if ($ExpectedProcessId -le 0 -or $ExpectedStartedAt -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$') { throw 'A captured process identity is required.' }
     Invoke-WallpaperAssistantTakeover $ExpectedProcessId $ExpectedStartedAt | ConvertTo-Json -Depth 5 -Compress
