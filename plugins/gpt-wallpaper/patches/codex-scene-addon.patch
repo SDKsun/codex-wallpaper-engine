@@ -578,11 +578,12 @@ index 5552cbd..bb6987b 100644
  
 diff --git a/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
 new file mode 100644
-index 0000000..b4a9c51
+index 0000000..7bfdfc8
 --- /dev/null
 +++ b/windows/app/CodexDreamSkin.Manager/CodexLauncher.cs
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,459 @@
 +using System.Diagnostics;
++using System.Globalization;
 +using System.Text;
 +using System.Text.Json;
 +
@@ -596,8 +597,74 @@ index 0000000..b4a9c51
 +  private const string ProductName = "Codex 动态壁纸";
 +  private const int OutputLimit = 64 * 1024;
 +  private static readonly TimeSpan LibraryTimeout = TimeSpan.FromSeconds(45);
++  private sealed record LaunchRequest(bool Interactive, ExistingCodexOwner? ExistingOwner);
 +
-+  public static int Run(bool interactive = true)
++  internal static bool IsLaunchRequest(string[] arguments) => arguments.Any(argument =>
++    argument.Equals("--launch", StringComparison.OrdinalIgnoreCase) ||
++    argument.Equals("--non-interactive", StringComparison.OrdinalIgnoreCase) ||
++    argument.Equals("--existing-only", StringComparison.OrdinalIgnoreCase) ||
++    argument.Equals("--expected-process-id", StringComparison.OrdinalIgnoreCase) ||
++    argument.Equals("--expected-started-at", StringComparison.OrdinalIgnoreCase));
++
++  public static int Run(string[] arguments)
++  {
++    try
++    {
++      var request = ParseRequest(arguments);
++      return Run(request.Interactive, request.ExistingOwner);
++    }
++    catch (Exception exception)
++    {
++      // Invalid identity flags fail before extraction, resource initialization
++      // or any startup script. Do not silently downgrade to a normal launch.
++      WriteFailure(exception);
++      return 1;
++    }
++  }
++
++  private static LaunchRequest ParseRequest(string[] arguments)
++  {
++    if (arguments.Length > 7) throw new ArgumentException("Invalid launch arguments.");
++    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++    var interactive = true;
++    var existingOnly = false;
++    int? processId = null;
++    DateTimeOffset? startedAt = null;
++    for (var index = 0; index < arguments.Length; index++)
++    {
++      var argument = arguments[index];
++      if (!seen.Add(argument)) throw new ArgumentException("Duplicate launch argument.");
++      switch (argument.ToLowerInvariant())
++      {
++        case "--launch": break;
++        case "--non-interactive": interactive = false; break;
++        case "--existing-only": existingOnly = true; break;
++        case "--expected-process-id":
++          if (++index >= arguments.Length || !int.TryParse(arguments[index], NumberStyles.None,
++              CultureInfo.InvariantCulture, out var parsedId) || parsedId <= 0)
++            throw new ArgumentException("Invalid existing Codex process identity.");
++          processId = parsedId;
++          break;
++        case "--expected-started-at":
++          if (++index >= arguments.Length || arguments[index].Length > 64 ||
++              !System.Text.RegularExpressions.Regex.IsMatch(arguments[index], @"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z\z") ||
++              !DateTimeOffset.TryParse(arguments[index], CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedStart) ||
++              parsedStart.Offset != TimeSpan.Zero || parsedStart <= DateTimeOffset.MinValue)
++            throw new ArgumentException("Invalid existing Codex start identity.");
++          startedAt = parsedStart;
++          break;
++        default: throw new ArgumentException("Unsupported launch argument.");
++      }
++    }
++    if (!seen.Contains("--launch") || existingOnly != (processId.HasValue && startedAt.HasValue) ||
++        (!existingOnly && (processId.HasValue || startedAt.HasValue)))
++      throw new ArgumentException("Existing-only startup requires an exact owner identity.");
++    // Existing-only can never display or approve a restart dialog.
++    return new LaunchRequest(interactive && !existingOnly,
++      existingOnly ? new ExistingCodexOwner(processId!.Value, startedAt!.Value) : null);
++  }
++
++  private static int Run(bool interactive, ExistingCodexOwner? existingOwner)
 +  {
 +    Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 +    Application.EnableVisualStyles();
@@ -610,18 +677,22 @@ index 0000000..b4a9c51
 +      catch (AbandonedMutexException) { acquired = true; }
 +      // A second click while the same launcher is working must not start a
 +      // competing extraction, resource service or PowerShell operation.
-+      if (!acquired) return 0;
++      if (!acquired)
++      {
++        if (existingOwner is not null) throw new InvalidOperationException("Existing Codex repair is busy.");
++        return 0;
++      }
 +
 +      var runtime = new RuntimeProvisioner();
 +      runtime.EnsureExtracted();
 +      using var service = new DreamSkinService(runtime)
 +      {
-+        ConfirmCodexRestart = interactive ? ConfirmRestart : _ => false,
++        ConfirmCodexRestart = existingOwner is null && interactive ? ConfirmRestart : _ => false,
 +      };
 +      RunFlowAsync(
 +        () => EnsureLibraryAsync(runtime),
-+        () => service.StartAsync()).GetAwaiter().GetResult();
-+      try { TaskbarRelaunch.ApplyAsync(runtime).GetAwaiter().GetResult(); }
++        () => service.StartAsync(existingOwner: existingOwner)).GetAwaiter().GetResult();
++      try { if (existingOwner is null) TaskbarRelaunch.ApplyAsync(runtime).GetAwaiter().GetResult(); }
 +      catch
 +      {
 +        // Relaunch metadata is optional. A verified visible wallpaper window
@@ -859,6 +930,7 @@ index 0000000..b4a9c51
 +  {
 +    try
 +    {
++      if (!DreamSkinService.ExistingOnlyArgumentsSelfTest(runtime)) return false;
 +      ProcessStartInfo Fixture(string source)
 +      {
 +        var info = CreateLibraryStartInfo(runtime.NodePath,
@@ -896,6 +968,33 @@ index 0000000..b4a9c51
 +  {
 +    try
 +    {
++      var owner = new ExistingCodexOwner(1234, new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero));
++      var ownerTime = owner.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
++      var existingArguments = new[] { "--launch", "--non-interactive", "--existing-only", "--expected-process-id", "1234", "--expected-started-at", ownerTime };
++      var existing = ParseRequest(existingArguments);
++      if (existing.Interactive || existing.ExistingOwner != owner ||
++          ParseRequest(new[] { "--launch" }) != new LaunchRequest(true, null) ||
++          ParseRequest(new[] { "--launch", "--non-interactive" }) != new LaunchRequest(false, null) ||
++          ParseRequest(existingArguments.Where(argument => argument != "--non-interactive").ToArray()).Interactive ||
++          !IsLaunchRequest(new[] { "--existing-only" }) || !IsLaunchRequest(new[] { "--expected-process-id", "1" }) ||
++          IsLaunchRequest(new[] { "--minimized" })) return false;
++      foreach (var invalid in new[] { Array.Empty<string>(), new[] { "--existing-only" },
++        new[] { "--launch", "--existing-only" }, new[] { "--launch", "--expected-process-id", "1234" },
++        existingArguments.Where(argument => argument != "--existing-only").ToArray(),
++        existingArguments.Select(argument => argument == "1234" ? "0" : argument).ToArray(),
++        existingArguments.Select(argument => argument == "1234" ? "+1234" : argument).ToArray(),
++        existingArguments.Select(argument => argument == ownerTime ? "2026-01-02T03:04:05.0000000+08:00" : argument).ToArray(),
++        existingArguments.Select(argument => argument == ownerTime ? "invalid" : argument).ToArray(),
++        existingArguments.Concat(new[] { "--existing-only" }).ToArray(),
++        new[] { "--launch", "--launch" }, new[] { "--launch", "--unexpected" }, new[] { "--launch", "--assistant" } })
++      { try { ParseRequest(invalid); return false; } catch (ArgumentException) { } }
++      var exactStart = DreamSkinService.CreateStartArguments(owner);
++      if (!exactStart.SequenceEqual(new[] { "-Port", "9335", "-VerificationTimeoutSeconds", "300", "-ExistingOnly",
++        "-ExpectedOwnerProcessId", "1234", "-ExpectedOwnerStartedAt", ownerTime }) ||
++          DreamSkinService.CreateStartArguments().Contains("-ExistingOnly")) return false;
++      foreach (var invalid in new[] { owner with { ProcessId = 0 }, owner with { StartedAt = DateTimeOffset.MinValue },
++        owner with { StartedAt = owner.StartedAt.ToOffset(TimeSpan.FromHours(8)) } })
++      { try { DreamSkinService.CreateStartArguments(invalid); return false; } catch (ArgumentException) { } }
 +      var events = new List<string>();
 +      RunFlowAsync(() => { events.Add("library"); return Task.CompletedTask; },
 +        () => { events.Add("codex"); return Task.CompletedTask; }).GetAwaiter().GetResult();
@@ -943,28 +1042,56 @@ index 0000000..b4a9c51
 +  }
 +}
 diff --git a/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs b/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
-index 842a3eb..6e1378f 100644
+index 842a3eb..68e2644 100644
 --- a/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
 +++ b/windows/app/CodexDreamSkin.Manager/DreamSkinService.cs
-@@ -20,9 +20,15 @@ internal sealed class DreamSkinService : IDisposable
+@@ -1,8 +1,11 @@
+ using System.Diagnostics;
++using System.Globalization;
+ using System.Text.Json;
  
-   public async Task StartAsync(CancellationToken cancellationToken = default)
+ namespace CodexDreamSkin.Manager;
+ 
++internal sealed record ExistingCodexOwner(int ProcessId, DateTimeOffset StartedAt);
++
+ internal sealed class DreamSkinService : IDisposable
+ {
+   private readonly RuntimeProvisioner _runtime;
+@@ -18,27 +21,140 @@ internal sealed class DreamSkinService : IDisposable
+ 
+   public Func<string, bool>? ConfirmCodexRestart { get; set; }
+ 
+-  public async Task StartAsync(CancellationToken cancellationToken = default)
++  public async Task StartAsync(CancellationToken cancellationToken = default, ExistingCodexOwner? existingOwner = null)
    {
 -    var arguments = new List<string> { "-Port", "9335" };
+-    var status = GetStatus();
+-    if (!status.WatcherRunning && status.CodexRunning)
 +    // Large Scene packages and first-run WebGL shader compilation can outlive
 +    // the legacy image-only startup window. Keep verification mandatory/bounded.
-+    var arguments = new List<string> { "-Port", "9335", "-VerificationTimeoutSeconds", "300" };
-     var status = GetStatus();
--    if (!status.WatcherRunning && status.CodexRunning)
++    var arguments = CreateStartArguments(existingOwner);
 +    // A watcher can stop while its verified CDP browser is still running or
 +    // minimized. Let the startup script restore that exact managed window;
 +    // asking for a restart here would also close unrelated normal windows.
-+    if (!status.WatcherRunning && status.CodexRunning &&
-+        !await CanReuseVerifiedCdpAsync(cancellationToken))
++    if (existingOwner is null)
      {
-       if (ConfirmCodexRestart?.Invoke(
-           "Codex 需要重启一次以启用动态壁纸，未保存的输入可能丢失。现在重启吗？") != true)
-@@ -35,10 +41,67 @@ internal sealed class DreamSkinService : IDisposable
+-      if (ConfirmCodexRestart?.Invoke(
+-          "Codex 需要重启一次以启用动态壁纸，未保存的输入可能丢失。现在重启吗？") != true)
++      var status = GetStatus();
++      if (!status.WatcherRunning && status.CodexRunning &&
++          !await CanReuseVerifiedCdpAsync(cancellationToken))
+       {
+-        throw new OperationCanceledException("已取消启动；Codex 未发生更改。");
++        if (ConfirmCodexRestart?.Invoke(
++            "Codex 需要重启一次以启用动态壁纸，未保存的输入可能丢失。现在重启吗？") != true)
++        {
++          throw new OperationCanceledException("已取消启动；Codex 未发生更改。");
++        }
++        arguments.Add("-RestartExisting");
+       }
+-      arguments.Add("-RestartExisting");
+     }
+     var result = await _runner.RunScriptAsync(
        _runtime.StartScript,
        arguments,
        cancellationToken,
@@ -987,6 +1114,53 @@ index 842a3eb..6e1378f 100644
      result.ThrowIfFailed("启动 Codex 动态壁纸");
    }
  
++  internal static List<string> CreateStartArguments(ExistingCodexOwner? existingOwner = null)
++  {
++    var arguments = new List<string> { "-Port", "9335", "-VerificationTimeoutSeconds", "300" };
++    if (existingOwner is null) return arguments;
++    if (existingOwner.ProcessId <= 0 || existingOwner.StartedAt.Offset != TimeSpan.Zero ||
++        existingOwner.StartedAt <= DateTimeOffset.MinValue)
++      throw new ArgumentException("Existing Codex owner identity is invalid.", nameof(existingOwner));
++    // This mode cannot confirm a restart or fall back to launching an app. The
++    // script revalidates this exact registered owner before any repair effects.
++    arguments.AddRange(new[] { "-ExistingOnly", "-ExpectedOwnerProcessId",
++      existingOwner.ProcessId.ToString(CultureInfo.InvariantCulture), "-ExpectedOwnerStartedAt",
++      existingOwner.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) });
++    return arguments;
++  }
++
++  internal static bool ExistingOnlyArgumentsSelfTest(RuntimeProvisioner runtime)
++  {
++    var fixture = Path.Combine(Path.GetTempPath(), "codex-existing-only-args-" + Guid.NewGuid().ToString("N"));
++    var script = Path.Combine(fixture, "capture-existing-arguments.ps1");
++    try
++    {
++      Directory.CreateDirectory(fixture);
++      File.WriteAllText(script, string.Join('\n', new[] {
++        "param([int]$Port,[int]$VerificationTimeoutSeconds,[switch]$ExistingOnly,[int]$ExpectedOwnerProcessId,[string]$ExpectedOwnerStartedAt)",
++        "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)",
++        "[pscustomobject]@{port=$Port;timeout=$VerificationTimeoutSeconds;existingOnly=[bool]$ExistingOnly;owner=$ExpectedOwnerProcessId;started=$ExpectedOwnerStartedAt;unboundCount=$args.Count;restart=$PSBoundParameters.ContainsKey('RestartExisting')} | ConvertTo-Json -Compress"
++      }), new System.Text.UTF8Encoding(false));
++      var owner = new ExistingCodexOwner(1234, new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero));
++      using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(8));
++      var result = new PowerShellRunner(runtime).RunScriptAsync(script, CreateStartArguments(owner), deadline.Token)
++        .GetAwaiter().GetResult();
++      if (result.ExitCode != 0 || !string.IsNullOrWhiteSpace(result.StandardError)) return false;
++      using var document = JsonDocument.Parse(result.StandardOutput.TrimStart('\uFEFF'));
++      var root = document.RootElement;
++      return root.GetProperty("port").GetInt32() == 9335 && root.GetProperty("timeout").GetInt32() == 300 &&
++        root.GetProperty("existingOnly").GetBoolean() && root.GetProperty("owner").GetInt32() == owner.ProcessId &&
++        root.GetProperty("started").GetString() == owner.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) &&
++        root.GetProperty("unboundCount").GetInt32() == 0 && !root.GetProperty("restart").GetBoolean();
++    }
++    catch { return false; }
++    finally
++    {
++      // Fixed fixture file only; never delete or invoke the production script.
++      try { File.Delete(script); Directory.Delete(fixture, false); } catch { }
++    }
++  }
++
 +  private async Task<bool> CanReuseVerifiedCdpAsync(CancellationToken cancellationToken)
 +  {
 +    // This script mode checks the registered executable, loopback owner,
@@ -1252,10 +1426,10 @@ index 55f8d61..ca24103 100644
    }
  }
 diff --git a/windows/app/CodexDreamSkin.Manager/Program.cs b/windows/app/CodexDreamSkin.Manager/Program.cs
-index af8029e..bfcc9aa 100644
+index af8029e..3ecf661 100644
 --- a/windows/app/CodexDreamSkin.Manager/Program.cs
 +++ b/windows/app/CodexDreamSkin.Manager/Program.cs
-@@ -5,14 +5,35 @@ namespace CodexDreamSkin.Manager;
+@@ -5,14 +5,34 @@ namespace CodexDreamSkin.Manager;
  internal static class Program
  {
    private const string MutexName = @"Local\CodexDreamSkin.Manager";
@@ -1265,6 +1439,10 @@ index af8029e..bfcc9aa 100644
    [STAThread]
    private static int Main(string[] args)
    {
++    // Identity-bearing repair arguments must never fall through to another
++    // mode or the settings manager when malformed or mixed with other flags.
++    if (CodexLauncher.IsLaunchRequest(args))
++      return CodexLauncher.Run(args);
 +    if (args.Contains("--assistant-self-test", StringComparer.OrdinalIgnoreCase))
 +      return StartupAssistant.SelfTest() ? 0 : 7;
 +    if (args.Contains("--assistant", StringComparer.OrdinalIgnoreCase))
@@ -1275,11 +1453,6 @@ index af8029e..bfcc9aa 100644
 +    {
 +      return CodexLauncher.SelfTest() && TaskbarRelaunch.SelfTest() ? 0 : 6;
 +    }
-+    if (args.Contains("--launch", StringComparer.OrdinalIgnoreCase))
-+    {
-+      return CodexLauncher.Run(interactive: !args.Contains("--non-interactive", StringComparer.OrdinalIgnoreCase));
-+    }
-+
      using var mutex = new Mutex(true, MutexName, out var createdNew);
      if (!createdNew && !args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
      {
@@ -1291,7 +1464,7 @@ index af8029e..bfcc9aa 100644
        MessageBox.Show(
          $"{ProductName}已经在运行，请查看任务栏托盘。",
          ProductName,
-@@ -38,17 +59,32 @@ internal static class Program
+@@ -38,17 +58,32 @@ internal static class Program
        var settings = new SettingsStore();
        var service = new DreamSkinService(runtime);
        var minimized = args.Contains("--minimized", StringComparer.OrdinalIgnoreCase);
@@ -1329,7 +1502,7 @@ index af8029e..bfcc9aa 100644
          Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
          File.AppendAllText(logPath, $"[{DateTimeOffset.Now:O}] {exception}\r\n");
        }
-@@ -86,7 +122,12 @@ internal static class SelfTest
+@@ -86,7 +121,12 @@ internal static class SelfTest
        {
          return 3;
        }
@@ -1343,7 +1516,7 @@ index af8029e..bfcc9aa 100644
      }
      catch
      {
-@@ -94,7 +135,28 @@ internal static class SelfTest
+@@ -94,7 +134,28 @@ internal static class SelfTest
      }
    }
  
@@ -1373,7 +1546,7 @@ index af8029e..bfcc9aa 100644
    {
      var temporary = Path.Combine(
        Path.GetTempPath(),
-@@ -104,9 +166,42 @@ internal static class SelfTest
+@@ -104,9 +165,42 @@ internal static class SelfTest
      int? childProcessId = null;
      try
      {
@@ -1417,7 +1590,7 @@ index af8029e..bfcc9aa 100644
          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
          $stdout = Join-Path $PSScriptRoot 'child-stdout.log'
          $stderr = Join-Path $PSScriptRoot 'child-stderr.log'
-@@ -116,6 +211,7 @@ internal static class SelfTest
+@@ -116,6 +210,7 @@ internal static class SelfTest
          ) -WindowStyle Hidden -PassThru `
            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
          Set-Content -LiteralPath $pidFile -Value $child.Id -Encoding Ascii
@@ -1425,7 +1598,7 @@ index af8029e..bfcc9aa 100644
          """,
          new System.Text.UTF8Encoding(false));
  
-@@ -126,7 +222,7 @@ internal static class SelfTest
+@@ -126,7 +221,7 @@ internal static class SelfTest
            script,
            Array.Empty<string>(),
            cancellation.Token,
@@ -1434,7 +1607,7 @@ index af8029e..bfcc9aa 100644
          .GetAwaiter()
          .GetResult();
        stopwatch.Stop();
-@@ -138,7 +234,18 @@ internal static class SelfTest
+@@ -138,7 +233,18 @@ internal static class SelfTest
          childProcessId = parsedProcessId;
        }
  
@@ -1488,10 +1661,10 @@ index ca278bf..aa41222 100644
      foreach (var relativePath in ResourceMap.Values)
 diff --git a/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
 new file mode 100644
-index 0000000..7b96646
+index 0000000..9869a92
 --- /dev/null
 +++ b/windows/app/CodexDreamSkin.Manager/StartupAssistant.cs
-@@ -0,0 +1,779 @@
+@@ -0,0 +1,973 @@
 +using System.Diagnostics;
 +using System.Globalization;
 +using System.Text;
@@ -1596,6 +1769,7 @@ index 0000000..7b96646
 +    {
 +      if (_busy || _exitRequested || DateTimeOffset.UtcNow < _nextProbe) return;
 +      _busy = true;
++      var stage = "settings";
 +      try
 +      {
 +        var settings = CurrentSettings();
@@ -1608,12 +1782,8 @@ index 0000000..7b96646
 +          _lastPaused = settings.Paused;
 +          Journal(settings.Paused ? "assistant_paused" : "assistant_ready");
 +        }
-+        // Resource initialization runs asynchronously while snapshots continue
-+        // observing the fresh process window. It never closes or launches Codex.
-+        if (!settings.Paused && !_suppressed && _resources is null)
-+          _resources = CodexLauncher.EnsureLibraryAsync(_runtime);
++        stage = "snapshot";
 +        var snapshot = await ReadSnapshotAsync();
-+        foreach (var reason in _controller.Observe(snapshot, DateTimeOffset.UtcNow)) Journal(reason);
 +        if (settings.Paused || _suppressed)
 +        {
 +          // A resume affects later launches, not windows opened while paused.
@@ -1621,13 +1791,54 @@ index 0000000..7b96646
 +          WriteStatus("paused");
 +          return;
 +        }
++        var now = DateTimeOffset.UtcNow;
++        var missed = _controller.ResourceWarmupMissed(snapshot, now);
++        foreach (var reason in _controller.Observe(snapshot, now)) Journal(reason);
++        if (missed is not null)
++        {
++          _candidate = missed;
++          Report("resource_warmup_missed_launch", "壁纸资源准备时间较长，本次 Codex 窗口已保留；请准备完成后从原图标重新打开。");
++          return;
++        }
 +        WriteStatus("watching");
-+        if (_resources is null || !_resources.IsCompleted) return;
-+        await _resources;
++        var managedRootCount = snapshot.Roots.Count(root => root.Kind == "managed");
++        if (managedRootCount > 1)
++        {
++          // An ambiguous managed session must not start a library service that
++          // could repoint the resources used by an existing wallpaper window.
++          WriteStatus("ambiguous_managed_windows");
++          return;
++        }
++        var hadManagedRoot = managedRootCount == 1;
++        var candidate = _controller.Select(snapshot, now);
++        if (!hadManagedRoot)
++        {
++          // A cold launch needs the resource service. Admit a fresh candidate
++          // for diagnostics while it warms, but never extend its 15-second
++          // close eligibility once the user may have started working.
++          stage = "resource_warmup";
++          _resources ??= CodexLauncher.EnsureLibraryAsync(_runtime);
++          if (!_resources.IsCompleted)
++          {
++            if (candidate is not null) _controller.WaitForResources(candidate);
++            WriteStatus("warming_resources");
++            return;
++          }
++          await _resources;
++        }
++        else if (_resources?.IsFaulted == true)
++        {
++          // Reusing a verified existing managed window does not need a new
++          // library process, and a previous warm-up failure cannot block it.
++          _ = _resources.Exception;
++          _resources = null;
++        }
++        _controller.ResourcesReady();
 +        _lifetime.Token.ThrowIfCancellationRequested();
 +        _failures = 0;
-+        var candidate = _controller.Select(snapshot, DateTimeOffset.UtcNow);
++        candidate = _controller.Select(snapshot, DateTimeOffset.UtcNow);
 +        if (candidate is null) return;
++        stage = "settings";
 +        var current = CurrentSettings();
 +        if (!current.Enabled || current.Paused || _exitRequested) return;
 +        _controller.Attempt(candidate);
@@ -1637,11 +1848,14 @@ index 0000000..7b96646
 +        WriteStatus("takeover");
 +        // This bridge only acts on the captured root/descendant identities. It
 +        // never spawns Codex; cancellation cannot kill an application child tree.
++        stage = "takeover";
 +        var response = await InvokeBridgeAsync(new[] { "-Action", "Takeover",
 +          "-ExpectedProcessId", candidate.ProcessId.ToString(CultureInfo.InvariantCulture),
 +          "-ExpectedStartedAt", candidate.StartedAt.UtcDateTime.ToString("O") },
 +          TimeSpan.FromSeconds(35), includeLifetime: false);
-+        if (!ReadTakeover(response, candidate, out var reasonCode, out var closeRequested, out var windowRestored))
++        stage = "takeover_response";
++        if (!ReadTakeover(response, candidate, out var reasonCode, out var closeRequested,
++          out var windowRestored, out var reusedManaged))
 +        {
 +          if (_controller.Retry(candidate, reasonCode, closeRequested, DateTimeOffset.UtcNow))
 +          {
@@ -1660,6 +1874,7 @@ index 0000000..7b96646
 +          // Recover only when every registered application process is gone;
 +          // roots alone exclude renderer/utility orphans. The launcher repeats
 +          // its own strict preflight and never receives RestartExisting here.
++          stage = "recovery_snapshot";
 +          var recovery = await ReadSnapshotAsync();
 +          if (recovery.OperationBusy || recovery.RegisteredProcessCount != 0 || recovery.Roots.Count != 0)
 +          {
@@ -1673,6 +1888,7 @@ index 0000000..7b96646
 +        // Pause/uninstall revokes consent immediately, even if the narrowly
 +        // scoped close already completed. Do not start another application
 +        // after revocation; the user can reopen Codex normally in that race.
++        stage = "settings";
 +        var afterClose = CurrentSettings();
 +        if (!afterClose.Enabled || afterClose.Paused || _exitRequested || _suppressed)
 +        {
@@ -1680,20 +1896,55 @@ index 0000000..7b96646
 +          WriteStatus("paused");
 +          return;
 +        }
-+        var child = StartLauncher();
-+        WriteStatus("launching");
-+        _tray.Text = Caption + "：正在启动";
-+        _tray.ShowBalloonTip(3000, Caption, "正在重新打开 Codex 并恢复已保存的装扮。", ToolTipIcon.Info);
++        Snapshot? afterManagedHandoff = null;
++        if (hadManagedRoot && !reusedManaged)
++        {
++          stage = "recovery_snapshot";
++          afterManagedHandoff = await ReadSnapshotAsync();
++        }
++        var handoffNext = NextAfterHandoff(reusedManaged, hadManagedRoot, afterManagedHandoff);
++        ExistingCodexOwner? repairOwner = null;
++        if (handoffNext == HandoffNext.RepairExisting)
++        {
++          // The bridge verified and restored the existing managed HWND before
++          // closing only the fresh ordinary root. Repair resources and verify
++          // rendering only after that bounded handoff, with a mode that cannot
++          // launch an application if the captured existing owner disappears.
++          var managed = snapshot.Roots.SingleOrDefault(root => root.Kind == "managed");
++          if (managed is null)
++          {
++            Report("managed_handoff_identity_missing", "壁纸窗口身份已变化，本次未继续修复；已有会话已保留。");
++            return;
++          }
++          repairOwner = new ExistingCodexOwner(managed.ProcessId, managed.StartedAt);
++          Journal("managed_window_reused");
++        }
++        if (handoffNext == HandoffNext.Preserve)
++        {
++          Report("managed_handoff_incomplete", "现有壁纸窗口未能安全接入，本次未启动另一个 Codex；已有会话已保留。");
++          return;
++        }
++        stage = repairOwner is null ? "launch_start" : "existing_repair_start";
++        var child = StartLauncher(repairOwner);
++        WriteStatus(repairOwner is null ? "launching" : "repairing_existing");
++        _tray.Text = Caption + (repairOwner is null ? "：正在启动" : "：正在恢复装扮");
++        _tray.ShowBalloonTip(3000, Caption, repairOwner is null
++          ? "正在重新打开 Codex 并恢复已保存的装扮。"
++          : "已切回原壁纸窗口，正在检查并恢复装扮。", ToolTipIcon.Info);
 +        _takeoverInFlight = false;
 +        if (_exitRequested) { child.Dispose(); ExitThread(); return; }
 +        using (child)
 +        using (var wait = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token))
 +        {
-+          wait.CancelAfter(TimeSpan.FromSeconds(330));
++          stage = repairOwner is null ? "launch_wait" : "existing_repair_wait";
++          // Existing-only repair may first recover a stopped resource service
++          // (45s) and then run the mandatory bounded renderer verification.
++          wait.CancelAfter(TimeSpan.FromSeconds(repairOwner is null ? 330 : 370));
 +          try { await child.WaitForExitAsync(wait.Token); }
 +          catch (OperationCanceledException) when (!_lifetime.IsCancellationRequested)
 +          {
-+            Suppress("launch_wait_timeout", "装扮启动仍在进行，已暂停后续自动接管。当前启动进程会继续运行。");
++            Suppress(repairOwner is null ? "launch_wait_timeout" : "existing_repair_timeout",
++              "装扮恢复仍在进行，已暂停后续自动接管。当前恢复进程会继续运行。");
 +            return;
 +          }
 +          if (child.ExitCode != 0)
@@ -1702,7 +1953,8 @@ index 0000000..7b96646
 +            // This identity has already been attempted. Preserve the error,
 +            // but keep watching later user launches instead of silently
 +            // persisting a global pause after one transient command failure.
-+            Report("launch_failed", "本次自动装扮未完成。助手会等待下一次正常启动，详细原因见壁纸诊断。");
++            Report(repairOwner is null ? "launch_failed" : "existing_repair_failed",
++              "本次自动装扮未完成。助手会等待下一次正常启动，详细原因见壁纸诊断。");
 +            _nextProbe = DateTimeOffset.UtcNow.AddSeconds(2);
 +            return;
 +          }
@@ -1710,13 +1962,13 @@ index 0000000..7b96646
 +        }
 +        // Do not infer video/FPS success from this status. --launch owns its
 +        // native verification and the helper only reports that command result.
-+        Journal("launch_command_completed");
++        Journal(repairOwner is null ? "launch_command_completed" : "existing_window_repaired");
 +        WriteStatus("ready");
 +        _tray.Text = Caption + "：等待下次启动";
 +        _failures = 0;
 +      }
 +      catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-+      catch
++      catch (Exception exception)
 +      {
 +        // A failed warm-up is not a permanently poisoned task. Retry the
 +        // read-only resource preflight with bounded backoff; no process is
@@ -1724,7 +1976,7 @@ index 0000000..7b96646
 +        if (_resources?.IsFaulted == true) { _ = _resources.Exception; _resources = null; }
 +        _failures++;
 +        _nextProbe = DateTimeOffset.UtcNow + RetryDelay(_failures);
-+        Report("assistant_operation_failed", "自动装扮暂时无法完成，请打开壁纸设置查看。");
++        Report(OperationFailureCode(stage, exception), "自动装扮暂时无法完成，请打开壁纸设置查看诊断阶段。");
 +        if (_failures >= 3) Suppress("assistant_paused_after_errors", "自动装扮已因连续错误暂停，请从托盘恢复。");
 +      }
 +      finally
@@ -1751,15 +2003,10 @@ index 0000000..7b96646
 +      return result.StandardOutput;
 +    }
 +
-+    private Process StartLauncher()
++    private Process StartLauncher(ExistingCodexOwner? existingOwner = null)
 +    {
 +      RequirePlainPath(_launcher, file: true);
-+      var info = new ProcessStartInfo { FileName = _launcher, UseShellExecute = false,
-+        CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(_launcher)! };
-+      info.ArgumentList.Add("--launch");
-+      info.ArgumentList.Add("--non-interactive");
-+      info.Environment["LOCALAPPDATA"] = ManagerLocalData.Root;
-+      info.Environment["CODEX_DREAM_SKIN_LOCAL_APPDATA"] = ManagerLocalData.Root;
++      var info = CreateLauncherStartInfo(_launcher, ManagerLocalData.Root, existingOwner);
 +      return Process.Start(info) ?? throw new InvalidOperationException("Launcher did not start.");
 +    }
 +
@@ -1921,6 +2168,53 @@ index 0000000..7b96646
 +  private static TimeSpan RetryDelay(int failures) =>
 +    TimeSpan.FromSeconds(15 * (1 << Math.Clamp(failures - 1, 0, 2)));
 +
++  private static ProcessStartInfo CreateLauncherStartInfo(string launcher, string stateRoot, ExistingCodexOwner? existingOwner)
++  {
++    var info = new ProcessStartInfo { FileName = launcher, UseShellExecute = false,
++      CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(launcher)! };
++    info.ArgumentList.Add("--launch");
++    info.ArgumentList.Add("--non-interactive");
++    if (existingOwner is not null)
++    {
++      // Validate before starting any child; the launcher and PowerShell also
++      // reject missing or changed owner identities independently.
++      _ = DreamSkinService.CreateStartArguments(existingOwner);
++      info.ArgumentList.Add("--existing-only");
++      info.ArgumentList.Add("--expected-process-id");
++      info.ArgumentList.Add(existingOwner.ProcessId.ToString(CultureInfo.InvariantCulture));
++      info.ArgumentList.Add("--expected-started-at");
++      info.ArgumentList.Add(existingOwner.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
++    }
++    info.Environment["LOCALAPPDATA"] = stateRoot;
++    info.Environment["CODEX_DREAM_SKIN_LOCAL_APPDATA"] = stateRoot;
++    return info;
++  }
++
++  private enum HandoffNext { RepairExisting, Launch, Preserve }
++  private static HandoffNext NextAfterHandoff(bool reusedManaged, bool hadManagedRoot, Snapshot? afterHandoff) =>
++    reusedManaged ? (hadManagedRoot ? HandoffNext.RepairExisting : HandoffNext.Preserve) : !hadManagedRoot ? HandoffNext.Launch :
++    afterHandoff is { OperationBusy: false, RegisteredProcessCount: 0, Roots.Count: 0 }
++      ? HandoffNext.Launch : HandoffNext.Preserve;
++
++  private static string OperationFailureCode(string stage, Exception exception)
++  {
++    // Fixed allowlists only: exception messages and bridge output may contain
++    // private paths, command arguments or local service credentials.
++    var safeStage = stage is "settings" or "snapshot" or "resource_warmup" or "takeover" or
++      "takeover_response" or "recovery_snapshot" or "launch_start" or "launch_wait" or
++      "existing_repair_start" or "existing_repair_wait" ? stage : "operation";
++    var category = exception switch
++    {
++      OperationCanceledException or TimeoutException => "timeout",
++      JsonException => "invalid_response",
++      UnauthorizedAccessException => "access_denied",
++      IOException => "io_failed",
++      InvalidOperationException => "failed",
++      _ => "unexpected_error",
++    };
++    return "assistant_" + safeStage + "_" + category;
++  }
++
 +  private sealed class Controller
 +  {
 +    private readonly HashSet<string> _attempted = new(StringComparer.Ordinal);
@@ -1928,6 +2222,25 @@ index 0000000..7b96646
 +    private readonly Dictionary<string, DateTimeOffset> _retryAfter = new(StringComparer.Ordinal);
 +    private readonly HashSet<string> _observedExclusions = new(StringComparer.Ordinal);
 +    private DateTimeOffset? _notBefore;
++    private Root? _warmingCandidate;
++
++    public void WaitForResources(Root root) => _warmingCandidate ??= root;
++    public void ResourcesReady() => _warmingCandidate = null;
++    public Root? ResourceWarmupMissed(Snapshot snapshot, DateTimeOffset now)
++    {
++      if (_warmingCandidate is null) return null;
++      var current = snapshot.Roots.SingleOrDefault(root => root.Key == _warmingCandidate.Key);
++      if (current is null || current.Kind != "normal" || !current.PlainLaunch)
++      {
++        _warmingCandidate = null;
++        return null;
++      }
++      if (Fresh(current, now)) return null;
++      _warmingCandidate = null;
++      _attempted.Add(current.Key);
++      _observedExclusions.Add(current.Key);
++      return current;
++    }
 +
 +    public IEnumerable<string> Observe(Snapshot snapshot, DateTimeOffset now)
 +    {
@@ -1946,7 +2259,7 @@ index 0000000..7b96646
 +
 +    public Root? Select(Snapshot snapshot, DateTimeOffset now)
 +    {
-+      if (snapshot.OperationBusy) return null;
++      if (snapshot.OperationBusy || snapshot.Roots.Count(root => root.Kind == "managed") > 1) return null;
 +      foreach (var root in snapshot.Roots)
 +      {
 +        if (root.Kind != "normal" || !root.PlainLaunch || !root.VisibleWindow ||
@@ -1976,8 +2289,12 @@ index 0000000..7b96646
 +      _retryAfter[root.Key] = now.AddSeconds(1);
 +      return true;
 +    }
-+    public void OnlyFutureLaunches(DateTimeOffset after) => _notBefore = after;
-+    public void Ignore(Snapshot snapshot) { foreach (var root in snapshot.Roots) _attempted.Add(root.Key); }
++    public void OnlyFutureLaunches(DateTimeOffset after) { _notBefore = after; _warmingCandidate = null; }
++    public void Ignore(Snapshot snapshot)
++    {
++      _warmingCandidate = null;
++      foreach (var root in snapshot.Roots) _attempted.Add(root.Key);
++    }
 +    private static bool Fresh(Root root, DateTimeOffset now) => root.AgeSeconds <= 15 &&
 +      root.StartedAt <= now && now - root.StartedAt <= TimeSpan.FromSeconds(15);
 +  }
@@ -2027,17 +2344,17 @@ index 0000000..7b96646
 +  }
 +
 +  private static bool ReadTakeover(string json, Root expected, out string reason,
-+    out bool closeRequested, out bool windowRestored)
++    out bool closeRequested, out bool windowRestored, out bool reusedManaged)
 +  {
 +    reason = "rejected";
-+    closeRequested = false; windowRestored = false;
++    closeRequested = false; windowRestored = false; reusedManaged = false;
 +    if (Encoding.UTF8.GetByteCount(json) > 8192) throw new JsonException();
 +    using var document = JsonDocument.Parse(json.TrimStart('\uFEFF'), new JsonDocumentOptions { MaxDepth = 3 });
 +    var root = document.RootElement;
 +    if (root.TryGetProperty("reason", out var code))
 +    {
-+      Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "reason", "closeRequested", "windowRestored");
-+      if (root.GetProperty("schema").GetInt32() != 1 || Boolean(root, "closed") || Boolean(root, "takenOver"))
++      Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "reason", "closeRequested", "windowRestored", "reusedManaged");
++      if (root.GetProperty("schema").GetInt32() != 1 || Boolean(root, "closed") || Boolean(root, "takenOver") || Boolean(root, "reusedManaged"))
 +        throw new JsonException();
 +      if (root.GetProperty("processId").GetInt32() != expected.ProcessId || StartTime(root) != expected.StartedAt)
 +        throw new JsonException();
@@ -2048,11 +2365,14 @@ index 0000000..7b96646
 +      if (windowRestored && !closeRequested) throw new JsonException();
 +      return false;
 +    }
-+    Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "closeRequested", "windowRestored");
++    Fields(root, "schema", "closed", "takenOver", "processId", "startedAt", "closeRequested", "windowRestored", "reusedManaged");
 +    closeRequested = Boolean(root, "closeRequested");
 +    windowRestored = Boolean(root, "windowRestored");
-+    return root.GetProperty("schema").GetInt32() == 1 && Boolean(root, "closed") && Boolean(root, "takenOver") &&
++    reusedManaged = Boolean(root, "reusedManaged");
++    var accepted = root.GetProperty("schema").GetInt32() == 1 && Boolean(root, "closed") && Boolean(root, "takenOver") &&
 +      closeRequested && !windowRestored && root.GetProperty("processId").GetInt32() == expected.ProcessId && StartTime(root) == expected.StartedAt;
++    if (!accepted && reusedManaged) throw new JsonException();
++    return accepted;
 +  }
 +
 +  private static Settings ReadSettings(string file, string expectedLauncher)
@@ -2171,7 +2491,19 @@ index 0000000..7b96646
 +      var now = DateTimeOffset.UtcNow;
 +      if (RetryDelay(1).TotalSeconds != 15 || RetryDelay(2).TotalSeconds != 30 ||
 +          RetryDelay(3).TotalSeconds != 60 || RetryDelay(int.MaxValue).TotalSeconds != 60) return false;
++      if (OperationFailureCode("snapshot", new JsonException("private token")) != "assistant_snapshot_invalid_response" ||
++          OperationFailureCode("takeover", new OperationCanceledException("private path")) != "assistant_takeover_timeout" ||
++          OperationFailureCode("resource_warmup", new IOException("private URL")) != "assistant_resource_warmup_io_failed" ||
++          OperationFailureCode("private_token", new Exception("private data")) != "assistant_operation_unexpected_error") return false;
 +      var fresh = new Root(1001, now.AddSeconds(-1), "normal", 1, true, true);
++      var repairOwner = new ExistingCodexOwner(2001, now.AddMinutes(-1));
++      var repairLaunch = CreateLauncherStartInfo(@"C:\fixture\manager.exe", @"C:\fixture\state", repairOwner);
++      if (repairLaunch.UseShellExecute || !repairLaunch.CreateNoWindow ||
++          !repairLaunch.ArgumentList.SequenceEqual(new[] { "--launch", "--non-interactive", "--existing-only",
++            "--expected-process-id", "2001", "--expected-started-at", repairOwner.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture) }) ||
++          repairLaunch.Environment["LOCALAPPDATA"] != @"C:\fixture\state" ||
++          !CreateLauncherStartInfo(@"C:\fixture\manager.exe", @"C:\fixture\state", null).ArgumentList
++            .SequenceEqual(new[] { "--launch", "--non-interactive" })) return false;
 +      var controller = new Controller();
 +      if (controller.Select(new(false, new[] { fresh }), now) != fresh) return false;
 +      if (controller.Select(new(false, new[] { fresh with { VisibleWindow = false } }), now) is not null) return false;
@@ -2184,6 +2516,34 @@ index 0000000..7b96646
 +      if (controller.Select(new(false, new[] { fresh, other }), now) is not null ||
 +          controller.Select(new(false, new[] { fresh, other with { Kind = "unknown" } }), now) is not null ||
 +          controller.Select(new(false, new[] { fresh, other with { Kind = "managed" } }), now) != fresh) return false;
++      if (controller.Select(new(false, new[] { fresh, other with { Kind = "managed" },
++        other with { ProcessId = 1003, Kind = "managed" } }), now) is not null) return false;
++      if (NextAfterHandoff(true, true, null) != HandoffNext.RepairExisting ||
++          NextAfterHandoff(true, false, null) != HandoffNext.Preserve ||
++          NextAfterHandoff(false, false, null) != HandoffNext.Launch ||
++          NextAfterHandoff(false, true, null) != HandoffNext.Preserve ||
++          NextAfterHandoff(false, true, new(false, Array.Empty<Root>(), 0)) != HandoffNext.Launch ||
++          NextAfterHandoff(false, true, new(true, Array.Empty<Root>(), 0)) != HandoffNext.Preserve ||
++          NextAfterHandoff(false, true, new(false, Array.Empty<Root>(), 1)) != HandoffNext.Preserve ||
++          NextAfterHandoff(false, true, new(false, new[] { other with { Kind = "managed" } }, 1)) != HandoffNext.Preserve) return false;
++      var warming = new Controller();
++      warming.WaitForResources(fresh);
++      if (warming.ResourceWarmupMissed(new(false, new[] { fresh }), now.AddSeconds(5)) is not null ||
++          warming.Select(new(false, new[] { fresh }), now.AddSeconds(5)) != fresh) return false;
++      warming.ResourcesReady();
++      if (warming.ResourceWarmupMissed(new(false, new[] { fresh with { AgeSeconds = 21 } }), now.AddSeconds(20)) is not null) return false;
++      warming.WaitForResources(fresh);
++      var expiredWarmup = fresh with { AgeSeconds = 21 };
++      if (warming.ResourceWarmupMissed(new(false, new[] { expiredWarmup }), now.AddSeconds(20)) != expiredWarmup ||
++          warming.ResourceWarmupMissed(new(false, new[] { expiredWarmup }), now.AddSeconds(21)) is not null ||
++          warming.Select(new(false, new[] { expiredWarmup }), now.AddSeconds(20)) is not null) return false;
++      var vanishedWarmup = new Controller();
++      vanishedWarmup.WaitForResources(fresh);
++      if (vanishedWarmup.ResourceWarmupMissed(new(false, new[] { fresh with { StartedAt = now } }), now.AddSeconds(20)) is not null) return false;
++      var pausedWarmup = new Controller();
++      pausedWarmup.WaitForResources(fresh);
++      pausedWarmup.Ignore(new(false, new[] { fresh }));
++      if (pausedWarmup.ResourceWarmupMissed(new(false, new[] { expiredWarmup }), now.AddSeconds(20)) is not null) return false;
 +      controller.Attempt(fresh);
 +      if (controller.Select(new(false, new[] { fresh }), now) is not null ||
 +          controller.Select(new(false, new[] { fresh with { StartedAt = now.AddMilliseconds(-100) } }), now) is null) return false;
@@ -2216,14 +2576,21 @@ index 0000000..7b96646
 +        new string('x', MaximumJsonBytes + 1) })
 +      { try { ParseSnapshot(invalid); return false; } catch { } }
 +      var success = JsonSerializer.Serialize(new { schema = 1, closed = true, takenOver = true,
-+        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), closeRequested = true, windowRestored = false });
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), closeRequested = true, windowRestored = false, reusedManaged = false });
 +      if (!Regex.IsMatch(fresh.StartedAt.UtcDateTime.ToString("O"), @"\A\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z\z")) return false;
 +      var refused = JsonSerializer.Serialize(new { schema = 1, closed = false, takenOver = false,
-+        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), reason = "identity_changed", closeRequested = false, windowRestored = false });
-+      if (!ReadTakeover(success, fresh, out _, out var closedRequest, out _) || !closedRequest ||
-+          ReadTakeover(success, other, out _, out _, out _) ||
-+          ReadTakeover(refused, fresh, out _, out _, out _)) return false;
-+      try { ReadTakeover(refused.Replace("\"windowRestored\":false", "\"windowRestored\":true"), fresh, out _, out _, out _); return false; } catch (JsonException) { }
++        processId = fresh.ProcessId, startedAt = fresh.StartedAt.ToString("O"), reason = "identity_changed", closeRequested = false, windowRestored = false, reusedManaged = false });
++      if (!ReadTakeover(success, fresh, out _, out var closedRequest, out _, out var initiallyReused) || !closedRequest || initiallyReused ||
++          ReadTakeover(success, other, out _, out _, out _, out _) ||
++          ReadTakeover(refused, fresh, out _, out _, out _, out _)) return false;
++      var reused = success.Replace("\"reusedManaged\":false", "\"reusedManaged\":true");
++      if (!ReadTakeover(reused, fresh, out _, out _, out _, out var reallyReused) || !reallyReused) return false;
++      foreach (var invalid in new[] { refused.Replace("\"windowRestored\":false", "\"windowRestored\":true"),
++        refused.Replace("\"reusedManaged\":false", "\"reusedManaged\":true"),
++        reused.Replace("\"closed\":true", "\"closed\":false"),
++        success.Replace(",\"reusedManaged\":false", ""),
++        success.Replace("\"reusedManaged\":false", "\"reusedManaged\":\"false\"") })
++      { try { ReadTakeover(invalid, fresh, out _, out _, out _, out _); return false; } catch (JsonException) { } }
 +
 +      fixture = Path.Combine(Path.GetTempPath(), "codex-assistant-test-" + Guid.NewGuid().ToString("N"));
 +      Directory.CreateDirectory(fixture);
@@ -4115,10 +4482,10 @@ index 3a159c5..1d4ff66 100644
                earlyScriptId = await registerEarlyPayload(
                  session,
 diff --git a/windows/scripts/start-dream-skin.ps1 b/windows/scripts/start-dream-skin.ps1
-index 120fb4b..4526820 100644
+index 120fb4b..dd6205c 100644
 --- a/windows/scripts/start-dream-skin.ps1
 +++ b/windows/scripts/start-dream-skin.ps1
-@@ -5,8 +5,10 @@ param(
+@@ -5,8 +5,13 @@ param(
    [switch]$PromptRestart,
    [string]$ProfilePath,
    [switch]$ForegroundInjector,
@@ -4126,13 +4493,28 @@ index 120fb4b..4526820 100644
    [ValidateRange(0, 300000)][int]$OperationLockTimeoutMilliseconds = 0,
    [switch]$RequireUnpaused,
 +  [switch]$PreflightOnly,
++  [switch]$ExistingOnly,
++  [int]$ExpectedOwnerProcessId,
++  [string]$ExpectedOwnerStartedAt,
    [string]$SavedThemeDirectory,
    [ValidatePattern('^[a-f0-9]{32}$')][string]$ResultToken
  )
-@@ -19,6 +21,32 @@ $Injector = Join-Path $PSScriptRoot 'injector.mjs'
+@@ -19,12 +24,52 @@ $Injector = Join-Path $PSScriptRoot 'injector.mjs'
  . (Join-Path $PSScriptRoot 'theme-windows.ps1')
  . (Join-Path $PSScriptRoot 'localization-windows.ps1')
  
++if ($ExistingOnly) {
++  if ($RestartExisting -or $PromptRestart -or $ForegroundInjector -or $SavedThemeDirectory -or $PreflightOnly -or $ResultToken) {
++    throw 'Existing-only repair cannot restart, select a theme, run foreground injection or use another startup mode.'
++  }
++  if ($Port -ne 9335 -or $ExpectedOwnerProcessId -le 0 -or
++      $ExpectedOwnerStartedAt -cnotmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}Z$') {
++    throw 'Existing-only repair requires an exact managed owner PID and UTC start time on port 9335.'
++  }
++} elseif ($ExpectedOwnerProcessId -or $ExpectedOwnerStartedAt) {
++  throw 'An expected managed owner is valid only with existing-only repair.'
++}
++
 +# Manager consent preflight: read-only, before lock/config/theme initialization.
 +# A positive result identifies a reusable managed browser, not visible success.
 +if ($PreflightOnly) {
@@ -4162,7 +4544,17 @@ index 120fb4b..4526820 100644
  # RDP sessions composite through WARP (software D3D): a full-window video
  # wallpaper there burns CPU in the fake GPU process and floods the remote
  # stream. Flag the injector so video themes degrade to one captured poster
-@@ -48,6 +76,13 @@ function Invoke-DreamSkinStartupAppearanceRecovery {
+ # frame; console sessions keep full playback.
+-if (Test-DreamSkinRemoteSession) { $env:CODEX_DREAM_SKIN_POSTER = '1' }
+-else { Remove-Item Env:CODEX_DREAM_SKIN_POSTER -ErrorAction SilentlyContinue }
++if (-not $ExistingOnly) {
++  if (Test-DreamSkinRemoteSession) { $env:CODEX_DREAM_SKIN_POSTER = '1' }
++  else { Remove-Item Env:CODEX_DREAM_SKIN_POSTER -ErrorAction SilentlyContinue }
++}
+ 
+ function Invoke-DreamSkinStartupAppearanceRecovery {
+   param(
+@@ -48,6 +93,13 @@ function Invoke-DreamSkinStartupAppearanceRecovery {
    }
  }
  
@@ -4176,7 +4568,141 @@ index 120fb4b..4526820 100644
  function Test-DreamSkinRenderedVerificationOutput {
    param([AllowEmptyCollection()][object[]]$Output)
    try {
-@@ -169,6 +204,10 @@ try {
+@@ -100,6 +152,133 @@ function Restore-DreamSkinStartupThemeSelection {
+   return 'restored'
+ }
+ 
++function Get-DreamSkinExistingRepairSession {
++  param([int]$OwnerProcessId,[string]$OwnerStartedAt,[string]$ManagedProfile,[string]$BrowserId,[long]$Window=0)
++  $browser=Get-DreamSkinCdpBrowserIdentity -Port 9335
++  if(-not $browser -or ($BrowserId -and $browser.BrowserId -cne $BrowserId)){throw 'The existing managed browser changed or is unavailable.'}
++  foreach($install in @(Get-DreamSkinRegisteredCodexInstalls)){
++    $owner=Get-DreamSkinManagedWindowIdentity -Codex $install -Port 9335 -BrowserId $browser.BrowserId -ProfilePath $ManagedProfile
++    if(-not $owner -or $owner.ProcessId -ne $OwnerProcessId){continue}
++    $nativeStartedAt=Get-DreamSkinProcessStartedAt -ProcessId $owner.ProcessId
++    if($nativeStartedAt -cne $OwnerStartedAt -or $owner.SessionId -ne [Diagnostics.Process]::GetCurrentProcess().SessionId){
++      throw 'The existing managed owner identity changed.'
++    }
++    $windows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $owner.ProcessId -IncludeHidden)
++    if($windows.Count -ne 1 -or ($Window -and $windows[0].ToInt64() -ne $Window)){
++      throw 'The existing managed primary window changed or is ambiguous.'
++    }
++    return [pscustomobject]@{Codex=$install;BrowserId=$browser.BrowserId;ProcessId=$owner.ProcessId;
++      StartedAt=$nativeStartedAt;ProfilePath=$ManagedProfile;Window=$windows[0].ToInt64()}
++  }
++  throw 'The expected existing owner is not a registered managed Codex session.'
++}
++
++function Assert-DreamSkinExistingRepairSession {
++  param([Parameter(Mandatory=$true)][object]$Session)
++  $current=Get-DreamSkinExistingRepairSession -OwnerProcessId $Session.ProcessId -OwnerStartedAt $Session.StartedAt `
++    -ManagedProfile $Session.ProfilePath -BrowserId $Session.BrowserId -Window $Session.Window
++  if(-not (Test-DreamSkinPathEqual -Left $current.Codex.Executable -Right $Session.Codex.Executable)){
++    throw 'The registered executable changed during existing-only repair.'
++  }
++}
++
++function Invoke-DreamSkinExistingSessionRepair {
++  # This branch is deliberately isolated from every generic launch/restart and
++  # rollback path below. It can own an injector, never an application process.
++  $stateRoot=Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'
++  $managedProfile=[IO.Path]::GetFullPath((Join-Path $stateRoot 'cdp-profile'))
++  if($ProfilePath -and -not (Test-DreamSkinPathEqual -Left ([IO.Path]::GetFullPath($ProfilePath)) -Right $managedProfile)){
++    throw 'Existing-only repair requires the managed profile directory.'
++  }
++  $lock=$null;$daemon=$null;$session=$null;$writtenState=$null
++  try {
++    $lock=Enter-DreamSkinOperationLock -TimeoutMilliseconds $OperationLockTimeoutMilliseconds
++    $session=Get-DreamSkinExistingRepairSession -OwnerProcessId $ExpectedOwnerProcessId `
++      -OwnerStartedAt $ExpectedOwnerStartedAt -ManagedProfile $managedProfile
++    if(Test-DreamSkinRemoteSession){$env:CODEX_DREAM_SKIN_POSTER='1'}else{$env:CODEX_DREAM_SKIN_POSTER=$null}
++    $paths=Get-DreamSkinThemePaths -StateRoot $stateRoot
++    Assert-DreamSkinNoReparseComponents -Path $paths.Active
++    if(-not (Test-Path -LiteralPath $paths.Active -PathType Container)){throw 'The existing selected theme is unavailable.'}
++    $node=Get-DreamSkinNodeRuntime
++    $statePath=Join-Path $stateRoot 'state.json'
++    $previous=Read-DreamSkinState -Path $statePath
++    if($previous -and ($previous.port -ne 9335 -or $previous.browserId -cne $session.BrowserId -or
++      -not (Test-DreamSkinPathEqual -Left $previous.codexExe -Right $session.Codex.Executable) -or
++      -not (Test-DreamSkinPathEqual -Left $previous.profilePath -Right $managedProfile))){
++      throw 'Saved injector state belongs to another session; existing-only repair preserved it.'
++    }
++    if(Test-DreamSkinPaused -StateRoot $stateRoot){throw 'The selected wallpaper is paused; existing-only repair preserved that request.'}
++    Assert-DreamSkinExistingRepairSession -Session $session
++    if(-not (Invoke-DreamSkinOwnedWindowRestore -Window ([IntPtr]$session.Window) -ProcessId $session.ProcessId)){
++      throw 'The existing managed window could not be restored.'
++    }
++    Assert-DreamSkinExistingRepairSession -Session $session
++    if(-not (Stop-DreamSkinRecordedInjector -State $previous)){throw 'The previous owned injector could not be reconciled.'}
++    Assert-DreamSkinExistingRepairSession -Session $session
++    $injectorArgs=@((ConvertTo-DreamSkinProcessArgument -Value $Injector),'--watch','--port','9335',
++      '--browser-id',$session.BrowserId,'--theme-dir',(ConvertTo-DreamSkinProcessArgument -Value $paths.Active),
++      '--pause-file',(ConvertTo-DreamSkinProcessArgument -Value $paths.PauseFile))
++    $daemon=Start-Process -FilePath $node.Path -ArgumentList $injectorArgs -WindowStyle Hidden -PassThru `
++      -RedirectStandardOutput (Join-Path $stateRoot 'injector.log') -RedirectStandardError (Join-Path $stateRoot 'injector-error.log')
++    Start-Sleep -Milliseconds 500
++    if($daemon.HasExited){throw 'The replacement owned injector exited during existing-only repair.'}
++    $injectorStartedAt=Get-DreamSkinProcessStartedAt -ProcessId $daemon.Id
++    if(-not $injectorStartedAt){throw 'The replacement injector identity could not be recorded.'}
++    Assert-DreamSkinExistingRepairSession -Session $session
++    $writtenState=[pscustomobject]@{schemaVersion=3;platform='windows';port=9335;injectorPid=$daemon.Id;
++      injectorStartedAt=$injectorStartedAt;injectorPath=$Injector;nodePath=$node.Path;nodeVersion=$node.Version;
++      codexExe=$session.Codex.Executable;codexPackageRoot=$session.Codex.PackageRoot;
++      codexPackageFullName=$session.Codex.PackageFullName;codexPackageFamilyName=$session.Codex.PackageFamilyName;
++      codexVersion=$session.Codex.Version;browserId=$session.BrowserId;profilePath=$managedProfile;
++      themeDir=$paths.Active;pauseFile=$paths.PauseFile;createdAt=(Get-Date).ToUniversalTime().ToString('o')}
++    Write-DreamSkinState -Path $statePath -State $writtenState
++    $deadline=(Get-Date).AddSeconds($VerificationTimeoutSeconds)
++    $reapplied=$false
++    while($true){
++      Assert-DreamSkinExistingRepairSession -Session $session
++      if(Test-DreamSkinPaused -StateRoot $stateRoot){throw 'A pause superseded existing-only repair.'}
++      $verify=Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @($Injector,'--verify','--port','9335',
++        '--browser-id',$session.BrowserId,'--theme-dir',$paths.Active,'--timeout-ms','30000')
++      Write-DreamSkinUtf8FileAtomically -Path (Join-Path $stateRoot 'verify.log') -Content (($verify.Output -join "`r`n")+"`r`n")
++      if($verify.ExitCode -eq 0){
++        Assert-DreamSkinExistingRepairSession -Session $session
++        if($daemon.HasExited){throw 'The replacement owned injector exited during successful verification.'}
++        break
++      }
++      if(-not $reapplied){
++        $reapplied=$true
++        Assert-DreamSkinExistingRepairSession -Session $session
++        [void](Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @($Injector,'--once','--port','9335',
++          '--browser-id',$session.BrowserId,'--theme-dir',$paths.Active,'--timeout-ms','15000'))
++      }
++      if($daemon.HasExited){throw 'The replacement owned injector exited during verification.'}
++      if((Get-Date) -ge $deadline){throw 'Existing-only wallpaper verification failed; Codex was preserved.'}
++      Start-Sleep -Seconds 3
++    }
++    Write-Host 'Existing managed Codex wallpaper repaired and verified without launching an application.'
++  } catch {
++    $repairError=$_
++    # Preserve the live skin and application. Only this newly created watcher
++    # belongs to rollback; no --remove, profile activation or ordinary reopen.
++    if($daemon){
++      if(-not $daemon.HasExited){try{Stop-Process -InputObject $daemon -Force -ErrorAction Stop}catch{}}
++      [void]$daemon.WaitForExit(15000)
++      if($daemon.HasExited -and $writtenState){
++        try {
++          $current=Read-DreamSkinState -Path $statePath
++          if($current -and $current.injectorPid -eq $writtenState.injectorPid -and
++             $current.injectorStartedAt -ceq $writtenState.injectorStartedAt -and $current.browserId -ceq $writtenState.browserId){
++            Remove-Item -LiteralPath $statePath -Force -ErrorAction Stop
++          }
++        } catch {}
++      }
++    }
++    throw $repairError
++  } finally {if($lock){Exit-DreamSkinOperationLock -Mutex $lock}}
++}
++
++if($ExistingOnly){Invoke-DreamSkinExistingSessionRepair;return}
++
+ $StateRoot = Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'
+ $operationLock = $null
+ $startFailureCategory = 'internal-start-failure'
+@@ -169,6 +348,10 @@ try {
      # verified endpoint while Get-DreamSkinCodexInstall already resolves to
      # the new one.  Adopt the running install instead of restarting it.
      $runningRegistered = Get-DreamSkinVerifiedCdpIdentityForAnyRegistered -Port $Port
@@ -4187,7 +4713,7 @@ index 120fb4b..4526820 100644
      if ($null -ne $runningRegistered) {
        $cdpIdentity = $runningRegistered.Identity
        $codex = $runningRegistered.Codex
-@@ -201,6 +240,31 @@ try {
+@@ -201,6 +384,31 @@ try {
    }
    $pendingAppearanceTransaction = Test-DreamSkinPendingAppearanceTransaction `
      -BackupPath $BackupPath
@@ -4219,7 +4745,7 @@ index 120fb4b..4526820 100644
    if ($pendingAppearanceTransaction) {
      # A previous process ended before it could commit or recover appearance.
      # Do not reuse its live session: the locked restart path closes Codex first,
-@@ -210,13 +274,38 @@ try {
+@@ -210,13 +418,38 @@ try {
    }
    $debugReady = $null -ne $cdpIdentity
    $hiddenSessionIdentity = $null
@@ -4261,7 +4787,7 @@ index 120fb4b..4526820 100644
      }
    }
    # Explicit restart must also replace a still-live CDP session. Closing the
-@@ -341,7 +430,11 @@ try {
+@@ -341,7 +574,11 @@ try {
          -Port $Port -PreserveProcessIds $debugLaunchBaselineProcessIds
        $launchedWithCdp = $true
        if ($debugLaunch.Strategy -eq 'direct-store-executable') {
@@ -4274,7 +4800,7 @@ index 120fb4b..4526820 100644
        }
      }
  
-@@ -394,6 +487,11 @@ try {
+@@ -394,6 +631,11 @@ try {
      throw $launchError
    }
  
@@ -4286,7 +4812,7 @@ index 120fb4b..4526820 100644
    $startFailureCategory = 'state-reconciliation-failed'
    $pauseCleared = $false
    try {
-@@ -583,7 +681,7 @@ try {
+@@ -583,7 +825,7 @@ try {
      # shell markers are not rendered yet when the daemon has barely started,
      # and a single early miss used to tear the whole startup down.  The
      # watcher keeps applying in the background, so retry until a deadline.
@@ -4295,7 +4821,7 @@ index 120fb4b..4526820 100644
      $forceInjectedAfterVerifyFailure = $false
      while ($true) {
        $verify = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
-@@ -598,14 +696,16 @@ try {
+@@ -598,14 +840,16 @@ try {
        # builds never resolve -- comes back false.  Killing Codex in that state
        # destroys a working skin the user is looking at, so remember it and let
        # the rollback below leave the app alone (#267).
@@ -4314,7 +4840,7 @@ index 120fb4b..4526820 100644
          $once = Invoke-DreamSkinNative -FilePath $node.Path -ArgumentList @(
            $Injector, '--once', '--port', "$Port",
            '--browser-id', $cdpIdentity.BrowserId, '--theme-dir', $themePaths.Active,
-@@ -613,7 +713,7 @@ try {
+@@ -613,7 +857,7 @@ try {
          Write-DreamSkinUtf8FileAtomically -Path $VerifyPath -Content (
            (($verify.Output + $once.Output) -join "`r`n") + "`r`n"
          )
@@ -4323,7 +4849,7 @@ index 120fb4b..4526820 100644
            $skinLooksRendered = $true
          }
          if ($once.ExitCode -eq 0) { break }
-@@ -647,7 +747,7 @@ try {
+@@ -647,7 +891,7 @@ try {
          Write-Warning "The rollback injector has not exited yet: PID $($daemon.Id). State was preserved so the next start can reconcile it."
        }
      }
@@ -4332,7 +4858,7 @@ index 120fb4b..4526820 100644
        try {
          $rollbackIdentity = Get-DreamSkinVerifiedCdpIdentity -Port $Port -Codex $codex
          if ($null -ne $rollbackIdentity -and $rollbackIdentity.BrowserId -ceq $cdpIdentity.BrowserId) {
-@@ -662,23 +762,14 @@ try {
+@@ -662,23 +906,14 @@ try {
      }
      if ($injectorStopped) { Remove-Item -LiteralPath $StatePath -Force -ErrorAction SilentlyContinue }
      if ($launchedWithCdp -and -not $skinLooksRendered) {
@@ -5412,6 +5938,137 @@ index 0000000..4657bcb
 +    await fs.rm(temporary, { recursive: true, force: true });
 +  }
 +});
+diff --git a/windows/tests/start-existing-only.tests.ps1 b/windows/tests/start-existing-only.tests.ps1
+new file mode 100644
+index 0000000..553add2
+--- /dev/null
++++ b/windows/tests/start-existing-only.tests.ps1
+@@ -0,0 +1,125 @@
++[CmdletBinding()]
++param([Parameter(Mandatory=$true)][string]$Root)
++$ErrorActionPreference='Stop'
++$source=[IO.File]::ReadAllText((Join-Path $Root 'scripts\start-dream-skin.ps1'))
++$pattern='(?m)^\.\s+\(Join-Path \$PSScriptRoot ''(?:common-windows|theme-windows|localization-windows)\.ps1''\)\r?\n'
++if([regex]::Matches($source,$pattern).Count -ne 3){throw 'Existing-only fixture could not isolate startup imports.'}
++$source=[regex]::Replace($source,$pattern,'')
++$source=$source.Replace('$Injector = Join-Path $PSScriptRoot ''injector.mjs''','$Injector = ''mock-injector.mjs''')
++$source=$source.Replace('(Split-Path -Parent $PSScriptRoot)','''mock-skill-root''')
++if($source.Contains('$PSScriptRoot')){throw 'Existing-only fixture retained a real script-root dependency.'}
++$startBlock=[scriptblock]::Create($source)
++
++function Invoke-ExistingFixture([string]$Mode='success',[hashtable]$Additional=@{}){
++  $script:mode=$Mode;$script:bindings=0;$script:effects=@();$script:clock=0;$script:state=$null;$script:verify=0
++  $script:daemon=[pscustomobject]@{Id=4242;HasExited=$false}
++  $script:daemon|Add-Member ScriptMethod WaitForExit {param([int]$Milliseconds);return $this.HasExited}
++  $script:birth='2026-11-05T09:00:00.1234567Z'
++  $script:codex=[pscustomobject]@{Executable='C:\Fixture\ChatGPT.exe';PackageRoot='C:\Fixture';
++    PackageFullName='OpenAI.Codex_fixture';PackageFamilyName='OpenAI.Codex_fixture';Version='fixture'}
++  function Test-DreamSkinRemoteSession {return $false}
++  function Enter-DreamSkinOperationLock {param([int]$TimeoutMilliseconds);return 'mock-lock'}
++  function Exit-DreamSkinOperationLock {param($Mutex);$script:effects+='unlock'}
++  function Get-DreamSkinCdpBrowserIdentity {
++    param([int]$Port)
++    $script:bindings++
++    if($script:mode -eq 'missing-owner' -or ($script:mode -eq 'identity-drop' -and $script:bindings -ge 3)){return $null}
++    return [pscustomobject]@{BrowserId=$(if($script:mode -eq 'browser-drop' -and $script:bindings -ge 5){'changed'}else{'fixture-browser'})}
++  }
++  function Get-DreamSkinRegisteredCodexInstalls {return @($script:codex)}
++  function Get-DreamSkinManagedWindowIdentity {
++    param($Codex,[int]$Port,[string]$BrowserId,[string]$ProfilePath)
++    return [pscustomobject]@{ProcessId=200;StartedAt=$script:birth;SessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
++  }
++  function Get-DreamSkinProcessStartedAt {
++    param([int]$ProcessId)
++    if($ProcessId -eq 200){return $(if($script:mode -eq 'reused-pid'){'2026-11-05T09:01:00.1234567Z'}else{$script:birth})}
++    if($ProcessId -ne 4242){throw 'Unexpected process identity lookup'}
++    return '2026-11-05T09:02:00.1234567Z'
++  }
++  function Get-DreamSkinOwnedCodexWindows {
++    param([int]$ProcessId,[switch]$IncludeHidden)
++    if($ProcessId -ne 200 -or -not $IncludeHidden){throw 'Unexpected primary-window lookup'}
++    if($script:mode -eq 'ambiguous-window'){return @([IntPtr]9200,[IntPtr]9201)}
++    return @([IntPtr]9200)
++  }
++  function Test-DreamSkinPathEqual {param([string]$Left,[string]$Right);return $Left -ieq $Right}
++  function Get-DreamSkinThemePaths {param([string]$StateRoot);return [pscustomobject]@{Active=(Join-Path $StateRoot 'active-theme');PauseFile=(Join-Path $StateRoot 'paused')}}
++  function Assert-DreamSkinNoReparseComponents {param([string]$Path)}
++  function Test-Path {param([string]$LiteralPath,[string]$PathType);return $true}
++  function Get-DreamSkinNodeRuntime {return [pscustomobject]@{Path='mock-node.exe';Version='fixture'}}
++  function Read-DreamSkinState {param([string]$Path);return $script:state}
++  function Test-DreamSkinPaused {param([string]$StateRoot);return $false}
++  function Invoke-DreamSkinOwnedWindowRestore {
++    param([IntPtr]$Window,[int]$ProcessId)
++    if($ProcessId -ne 200 -or $Window.ToInt64() -ne 9200){throw 'Wrong existing HWND selected'}
++    $script:effects+='restore-existing-hwnd';return $true
++  }
++  function Stop-DreamSkinRecordedInjector {param($State);$script:effects+='stop-recorded-injector';return $true}
++  function ConvertTo-DreamSkinProcessArgument {param([string]$Value);return $Value}
++  function Start-Process {
++    param([string]$FilePath,[object[]]$ArgumentList,[string]$WindowStyle,[switch]$PassThru,[string]$RedirectStandardOutput,[string]$RedirectStandardError)
++    if($FilePath -cne 'mock-node.exe' -or $ArgumentList -notcontains '--watch'){throw 'Existing-only repair attempted an application launch'}
++    $script:effects+='start-owned-injector';return $script:daemon
++  }
++  function Write-DreamSkinState {param([string]$Path,$State);$script:state=$State;$script:effects+='write-state'}
++  function Write-DreamSkinUtf8FileAtomically {param([string]$Path,[string]$Content);$script:effects+='write-log'}
++  function Invoke-DreamSkinNative {
++    param([string]$FilePath,[object[]]$ArgumentList)
++    if($ArgumentList -contains '--remove'){throw 'Existing-only failure removed the live skin'}
++    if($ArgumentList -contains '--verify'){
++      $script:verify++;$script:effects+='verify'
++      if($script:mode -eq 'watcher-dies-on-success'){$script:daemon.HasExited=$true}
++      return [pscustomobject]@{ExitCode=$(if($script:mode -eq 'verify-failed'){2}else{0});Output=@('{"pass":true}')}
++    }
++    if($ArgumentList -contains '--once'){$script:effects+='once';return [pscustomobject]@{ExitCode=0;Output=@()}}
++    throw 'Unexpected injector command'
++  }
++  function Stop-Process {param($InputObject,[switch]$Force);if($InputObject.Id -ne 4242){throw 'Attempt to stop an application'};$InputObject.HasExited=$true;$script:effects+='stop-owned-injector'}
++  function Remove-Item {param([string]$LiteralPath,[switch]$Force);$script:effects+='remove-owned-state';$script:state=$null}
++  function Start-Sleep {param([int]$Milliseconds,[int]$Seconds)}
++  function Get-Date {$script:clock++;return [datetime]::new(2026,11,5,9,0,0,[DateTimeKind]::Utc).AddSeconds($script:clock*60)}
++  function Write-Host {param([Parameter(ValueFromRemainingArguments=$true)]$Object)}
++  # Every legacy application/config path is a hard failure in this fixture.
++  function Start-DreamSkinCodex {throw 'Ordinary application launch reached'}
++  function Start-DreamSkinCodexDirect {throw 'Direct application launch reached'}
++  function Start-DreamSkinCodexForDebugging {throw 'Debug application launch reached'}
++  function Stop-DreamSkinCodex {throw 'Application stop reached'}
++  function Invoke-DreamSkinCodexWindowActivation {throw 'Profile activation reached'}
++  function Install-DreamSkinBaseTheme {throw 'Application appearance mutation reached'}
++  function Resolve-DreamSkinConfigPaths {throw 'Application config binding reached'}
++  function Initialize-DreamSkinThemeStore {throw 'Theme initialization reached'}
++  $parameters=@{ExistingOnly=$true;Port=9335;ExpectedOwnerProcessId=200;ExpectedOwnerStartedAt=$script:birth;VerificationTimeoutSeconds=30}
++  foreach($key in $Additional.Keys){$parameters[$key]=$Additional[$key]}
++  $failed=$false;$errorText=$null
++  try{& $startBlock @parameters}catch{$failed=$true;$errorText=$_.Exception.Message}
++  return [pscustomobject]@{Failed=$failed;Error=$errorText;Effects=@($script:effects);DaemonStopped=$script:daemon.HasExited;Verify=$script:verify}
++}
++function Assert($Condition,[string]$Message){if(-not $Condition){throw $Message}}
++$savedOverride=$env:LOCALAPPDATA
++try {
++  $env:LOCALAPPDATA='C:\IsolatedExistingRepairFixture'
++  foreach($scenario in @('missing-owner','reused-pid','ambiguous-window')){
++    $result=Invoke-ExistingFixture $scenario
++    Assert ($result.Failed -and @($result.Effects|Where-Object {$_ -ne 'unlock'}).Count -eq 0) ('Unproven owner reached repair effects: '+$scenario)
++  }
++  foreach($conflict in @('RestartExisting','PromptRestart','ForegroundInjector','PreflightOnly')){
++    $result=Invoke-ExistingFixture 'success' @{$conflict=$true}
++    Assert ($result.Failed -and $result.Effects.Count -eq 0) ('Conflicting launch mode was not rejected before effects: '+$conflict)
++  }
++  foreach($additional in @(@{ExpectedOwnerProcessId=0},@{ExpectedOwnerStartedAt='bad'},@{SavedThemeDirectory='fixture-theme'},@{ProfilePath='C:\WrongProfile'})){
++    $result=Invoke-ExistingFixture 'success' $additional
++    Assert ($result.Failed -and $result.Effects.Count -eq 0) 'Invalid existing-only arguments reached effects'
++  }
++  $result=Invoke-ExistingFixture 'identity-drop'
++  Assert ($result.Failed -and $result.Effects -notcontains 'start-owned-injector' -and $result.Effects -notcontains 'write-state') 'A dropped owner fell back to a launch or state mutation'
++  $result=Invoke-ExistingFixture 'browser-drop'
++  Assert ($result.Failed -and $result.DaemonStopped -and $result.Effects -notcontains 'verify') 'A changed browser identity reached verification or leaked its new watcher'
++  $result=Invoke-ExistingFixture 'verify-failed'
++  Assert ($result.Failed -and $result.DaemonStopped -and $result.Verify -eq 1 -and $result.Effects -contains 'once') 'Failed verification must stop only its watcher and preserve the app/live skin'
++  $result=Invoke-ExistingFixture 'watcher-dies-on-success'
++  Assert ($result.Failed -and $result.DaemonStopped -and $result.Verify -eq 1 -and $result.Effects -contains 'remove-owned-state') 'A watcher dying during successful one-shot verification must not be reported as a repaired session'
++  $result=Invoke-ExistingFixture 'success'
++  Assert (-not $result.Failed -and -not $result.DaemonStopped -and $result.Verify -eq 1 -and $result.Effects -contains 'restore-existing-hwnd') ('Existing-only repair did not finish mandatory verification: '+$result.Error)
++  Write-Output 'Existing-only startup tests passed without application operations.'
++} finally {$env:LOCALAPPDATA=$savedOverride}
 diff --git a/windows/tests/start-renderer-readiness.tests.ps1 b/windows/tests/start-renderer-readiness.tests.ps1
 index 53bd4e1..b5d0881 100644
 --- a/windows/tests/start-renderer-readiness.tests.ps1

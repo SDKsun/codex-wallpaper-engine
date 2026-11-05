@@ -8,6 +8,8 @@ Local Wallpaper Engine backgrounds and configurable glass UI for managed Windows
 
 On 2026-11-03, recovery of a failed Codex 26.1021.3705.0 session was verified in the real application: full wallpaper coverage, a Scene running at about 30 FPS, mascot and glass, with existing windows and settings preserved. A complete exit and reopening with these changes remains to be validated. See [Compatibility](docs/COMPATIBILITY.md) for historical startup results and current scope.
 
+On 2026-11-05, existing-only repair was verified in the real application: 3840×2160 video with advancing decoded frames and full wallpaper coverage, both original application identities and settings retained, and no new application instance. Original-icon handoff and complete-exit reopening with the updated assistant still require separate validation.
+
 This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](https://github.com/elysia395/dsh-wallpaper-engine), using a local service and a scoped native-window bridge. Its Windows launcher is based on [Codex Dynamic Skin](https://github.com/CCDawn/Codex-Dynamic-Skin). It is independent of OpenAI, Valve and the upstream projects.
 
 ## Features
@@ -22,6 +24,7 @@ This project adapts the host modules and six-tab UI of [DSH Wallpaper Engine](ht
 - Optional system audio spectrum and Now Playing through a pinned, checksum-verified official media helper.
 - Explicit first-run restart confirmation, pause and appearance restoration.
 - Restores the verified managed wallpaper window when multiple Codex instances exist; background output does not block the manager's startup result.
+- On a fresh ordinary launch, the assistant verifies the existing managed process, debug connection and main window before reusing it. This path neither waits for resource warm-up nor creates another managed instance.
 - An optional separate launcher restores the local resource service and attempts to load the saved appearance; its entries coexist with the official application entry.
 - An optional resident assistant reattaches decoration after an ordinary launch, with tray pause/resume/disable controls and restoration of its login startup entry on uninstall.
 - Native wallpaper framing always covers the window; ordinary zoom-out and panning cannot expose the window base, while saved framing values are retained.
@@ -62,6 +65,8 @@ node .\scripts\startup-assistant.mjs --restore
 The assistant has a dedicated per-user login startup entry; plugin initialization also restores an already enabled assistant. It handles only ordinary, argument-free, visible instances started within 15 seconds, revalidating exact process identities. Existing ordinary sessions, deep links, file-open arguments and hidden background launches are preserved. A failed attempt is recorded rather than repeatedly retried. A session that was already open for a long time during installation must be exited before testing a fresh launch.
 
 The tray offers pause, resume and disable-and-exit. Resume affects later launches. Run `.\scripts\install-startup-assistant.ps1 -Action Uninstall` to revoke the assistant and restore its backed-up startup entry. Wallpaper settings and later private configuration or registry edits are retained.
+
+Use `.\scripts\install-startup-assistant.ps1 -PreserveActivation` to upgrade an existing assistant while retaining its enabled, paused or disabled state. With the assistant disabled, the original icon still opens an ordinary instance; ordinary and managed sessions use separate profiles and can coexist. Upgrading does not close existing sessions. Fresh-launch window reuse still requires real application validation; fixture results alone do not establish that the local handoff completed.
 
 ## Implementation and development
 

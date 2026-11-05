@@ -12,11 +12,13 @@ function Initialize-WallpaperAssistantNative {
   Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 namespace CodexWallpaperAssistant {
   public static class Native {
     public sealed class ProcessIdentity { public string StartedAt; public string Executable; }
+    public sealed class Listener { public string LocalAddress; public int OwningProcess; }
     private delegate bool Callback(IntPtr hwnd, IntPtr data);
     [DllImport("shell32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr CommandLineToArgvW(string line, out int count);
     [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
@@ -25,12 +27,15 @@ namespace CodexWallpaperAssistant {
     [DllImport("kernel32.dll")] private static extern bool GetProcessTimes(IntPtr handle, out long created, out long exit, out long kernel, out long user);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] private static extern bool QueryFullProcessImageName(IntPtr handle, uint flags, StringBuilder value, ref int size);
     [DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr handle, out uint code);
+    [DllImport("iphlpapi.dll")] private static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool ordered, int family, int tableClass, uint reserved);
     [DllImport("user32.dll")] private static extern bool EnumWindows(Callback callback, IntPtr data);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint process);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetWindowTextLengthW(IntPtr hwnd);
+    [DllImport("user32.dll", EntryPoint="GetWindowLongW")] private static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam);
     [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hwnd, int command);
@@ -50,11 +55,53 @@ namespace CodexWallpaperAssistant {
         return new ProcessIdentity { StartedAt=DateTime.FromFileTimeUtc(created).ToString("o"),Executable=image.ToString() };
       } finally { CloseHandle(handle); }
     }
+    private static void ReadListeners(int port, int family, List<Listener> result) {
+      int size=0;
+      uint error=GetExtendedTcpTable(IntPtr.Zero,ref size,false,family,3,0);
+      if(error!=122 || size<4 || size>1048576) throw new InvalidOperationException("Cannot inspect listener ownership.");
+      for(int attempt=0;attempt<3;attempt++) {
+        int allocated=size;
+        IntPtr table=Marshal.AllocHGlobal(allocated);
+        try {
+          error=GetExtendedTcpTable(table,ref size,false,family,3,0);
+          if(size<4 || size>1048576) throw new InvalidOperationException("Invalid listener table size.");
+          if(error==122) continue;
+          if(error!=0 || size>allocated) throw new InvalidOperationException("Cannot inspect listener ownership.");
+          int count=Marshal.ReadInt32(table);
+          int rowSize=family==2?24:56;
+          if(count<0 || count>(size-4)/rowSize) throw new InvalidOperationException("Invalid listener table rows.");
+          for(int index=0;index<count;index++) {
+            IntPtr row=IntPtr.Add(table,4+index*rowSize);
+            int encoded=Marshal.ReadInt32(row,family==2?8:20);
+            int localPort=((encoded&255)<<8)|((encoded>>8)&255);
+            if(localPort!=port) continue;
+            int state=Marshal.ReadInt32(row,family==2?0:48);
+            int owner=Marshal.ReadInt32(row,family==2?20:52);
+            if(state!=2 || owner<=0) throw new InvalidOperationException("Invalid listener identity.");
+            var address=new byte[family==2?4:16];
+            Marshal.Copy(IntPtr.Add(row,family==2?4:0),address,0,address.Length);
+            IPAddress ip=family==2?new IPAddress(address):new IPAddress(address,(uint)Marshal.ReadInt32(row,16));
+            result.Add(new Listener { LocalAddress=ip.ToString(),OwningProcess=owner });
+          }
+          return;
+        } finally { Marshal.FreeHGlobal(table); }
+      }
+      throw new InvalidOperationException("Listener table changed repeatedly.");
+    }
+    public static Listener[] Listeners(int port) {
+      if(port<1 || port>65535) throw new ArgumentOutOfRangeException("port");
+      var result=new List<Listener>();ReadListeners(port,2,result);ReadListeners(port,23,result);
+      return result.ToArray();
+    }
     private static bool Owned(IntPtr hwnd, uint process, bool requireVisible=true) {
       uint owner;GetWindowThreadProcessId(hwnd,out owner);
       if(owner!=process || !IsWindow(hwnd) || GetWindow(hwnd,4)!=IntPtr.Zero || (requireVisible&&!IsWindowVisible(hwnd)&&!IsIconic(hwnd)))return false;
       var name=new StringBuilder(256);GetClassName(hwnd,name,name.Capacity);
-      return name.ToString()=="Chrome_WidgetWin_1";
+      // Chromium also creates untitled and tool windows in the browser process.
+      // Count only its primary application surface. Keeping the unique-window
+      // check then rejects genuinely ambiguous user windows without treating an
+      // invisible auxiliary surface as a second application.
+      return name.ToString()=="Chrome_WidgetWin_1" && GetWindowTextLengthW(hwnd)>0 && (GetWindowLong(hwnd,-20)&0x80)==0;
     }
     public static long[] Windows(int process) {
       var result=new List<long>();Callback callback=(hwnd,data)=>{if(Owned(hwnd,(uint)process))result.Add(hwnd.ToInt64());return true;};
@@ -232,6 +279,7 @@ function Get-WallpaperAssistantEligibility($Context, [int]$ProcessId, [string]$S
   if (-not $root[0].visibleWindow) { return 'not_visible' }
   if ($root[0].ageSeconds -lt 0 -or $root[0].ageSeconds -gt 15) { return 'too_old' }
   if (@($Context.roots | Where-Object { $_.processId -ne $ProcessId -and $_.kind -cne 'managed' }).Count) { return 'ambiguous_roots' }
+  if (@($Context.roots | Where-Object kind -CEQ 'managed').Count -gt 1) { return 'ambiguous_roots' }
   $process = @($Context.processes | Where-Object { $_.processId -eq $ProcessId })
   if ($process.Count -ne 1 -or -not @($Context.installations).Count -or $process[0].sessionId -ne $Context.sessionId -or
       -not (Test-WallpaperAssistantPath $process[0].executable $Context.installations[0].executable)) { return 'identity_changed' }
@@ -296,6 +344,7 @@ function Test-WallpaperAssistantScope($Context, $Root, $Captured, [datetime]$Dea
   if(-not (Test-WallpaperAssistantOperationWindow $Root $Deadline)){return $(if($Deadline -eq [datetime]::MinValue){'too_old'}else{'operation_expired'})}
   if (-not @($Context.installations).Count -or -not (Test-WallpaperAssistantPath $Context.installations[0].executable $Root.executable)) { return 'registration_changed' }
   if (@($Context.roots | Where-Object { $_.processId -ne $Root.processId -and $_.kind -cne 'managed' }).Count) { return 'ambiguous_roots' }
+  if (@($Context.roots | Where-Object kind -CEQ 'managed').Count -gt 1) { return 'ambiguous_roots' }
   $live = @($Context.processes | Where-Object { $_.processId -eq $Root.processId })
   if ($live.Count -gt 1 -or ($live.Count -eq 1 -and -not (Test-WallpaperAssistantIdentity $Root $live[0]))) { return 'identity_changed' }
   if ($live.Count -eq 1) {
@@ -359,11 +408,89 @@ function Restore-WallpaperAssistantWindow($Expected) {
   try{return [CodexWallpaperAssistant.Native]::Restore($Expected.processId)}finally{$process.Dispose()}
 }
 
+function Get-WallpaperAssistantManagedEnginePath {
+  # This bridge is shipped beside the bundled engine. Do not resolve arbitrary
+  # commands from PATH or use a state-supplied script as a handoff authority.
+  $directory=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'engine\scripts'))
+  foreach($name in @('common-windows.ps1','config-utf8.ps1')){
+    $file=Join-Path $directory $name
+    $item=Get-Item -LiteralPath $file -Force -ErrorAction Stop
+    if($item.PSIsContainer -or $item.Length -gt 1048576){throw 'Invalid bundled managed-window helper.'}
+    $probe=$file
+    while($probe){
+      $component=Get-Item -LiteralPath $probe -Force -ErrorAction Stop
+      if($component.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Redirected bundled managed-window helper.'}
+      $probe=[IO.Path]::GetDirectoryName($probe)
+    }
+  }
+  return Join-Path $directory 'common-windows.ps1'
+}
+
+function Get-WallpaperAssistantManagedSession($Context,$ManagedRoot) {
+  try {
+    $managed=@($Context.roots|Where-Object kind -CEQ 'managed')
+    if($managed.Count -ne 1 -or $managed[0].processId -ne $ManagedRoot.processId -or $managed[0].startedAt -cne $ManagedRoot.startedAt){return $null}
+    $process=@($Context.processes|Where-Object processId -EQ $ManagedRoot.processId)
+    if($process.Count -ne 1 -or $process[0].identityVerified -ne $true -or $process[0].sessionId -ne $Context.sessionId -or $process[0].startedAt -cne $ManagedRoot.startedAt){return $null}
+    $registered=@($Context.installations|Where-Object {Test-WallpaperAssistantPath $_.executable $process[0].executable})
+    if($registered.Count -ne 1){return $null}
+    . (Get-WallpaperAssistantManagedEnginePath)
+    # Use fresh native TCP ownership rows for the bundled helper's checks.
+    # Get-NetTCPConnection/CIM module initialization can otherwise consume the
+    # entire 15-second admission window. This override exists in this call's
+    # scope only; all loopback, owner, browser and profile checks remain intact.
+    function Get-DreamSkinPortListeners([int]$Port) {
+      Initialize-WallpaperAssistantNative
+      return @([CodexWallpaperAssistant.Native]::Listeners($Port))
+    }
+    $profile=Join-Path (Get-WallpaperAssistantStateRoot) 'CodexDreamSkin\cdp-profile'
+    $browser=Get-DreamSkinCdpBrowserIdentity -Port 9335
+    if(-not $browser){return $null}
+    $codex=[pscustomobject]@{Executable=$registered[0].executable}
+    $owner=Get-DreamSkinManagedWindowIdentity -Codex $codex -Port 9335 -BrowserId $browser.BrowserId -ProfilePath $profile
+    if(-not $owner -or $owner.ProcessId -ne $process[0].processId -or $owner.SessionId -ne $process[0].sessionId -or
+       -not (Test-WallpaperAssistantTimestampPrecision $owner.StartedAt $process[0].startedAt)){return $null}
+    $windows=@(Get-DreamSkinOwnedCodexWindows -ProcessId $owner.ProcessId -IncludeHidden)
+    if($windows.Count -ne 1){return $null}
+    $visible=@(Get-DreamSkinOwnedCodexWindows -ProcessId $owner.ProcessId)
+    return [pscustomobject]@{process=$process[0];browserId=$browser.BrowserId;window=$windows[0].ToInt64();
+      visible=($visible.Count -eq 1 -and $visible[0].ToInt64() -eq $windows[0].ToInt64())}
+  } catch {return $null}
+}
+
+function Test-WallpaperAssistantManagedSession($Expected,[switch]$RequireVisible) {
+  try {
+    $context=Get-WallpaperAssistantContext
+    $managed=@($context.roots|Where-Object kind -CEQ 'managed')
+    if($managed.Count -ne 1){return $false}
+    $current=Get-WallpaperAssistantManagedSession $context $managed[0]
+    return $current -and (Test-WallpaperAssistantIdentity $Expected.process $current.process) -and
+      $current.browserId -ceq $Expected.browserId -and $current.window -eq $Expected.window -and
+      (-not $RequireVisible -or $current.visible)
+  } catch {return $false}
+}
+
+function Restore-WallpaperAssistantManagedSession($Expected) {
+  # An existing verified HWND is the handoff target. Never invoke a profile,
+  # protocol or new browser to manufacture a successful existing-session reuse.
+  try {
+    if(-not (Test-WallpaperAssistantConsent) -or -not (Test-WallpaperAssistantManagedSession $Expected)){return $false}
+    $process=Get-WallpaperAssistantPinnedProcess $Expected.process
+    if(-not $process){return $false}
+    try {
+      . (Get-WallpaperAssistantManagedEnginePath)
+      if(-not (Test-WallpaperAssistantConsent)){return $false}
+      if(-not (Invoke-DreamSkinOwnedWindowRestore -Window ([IntPtr]$Expected.window) -ProcessId $Expected.process.processId)){return $false}
+      return Test-WallpaperAssistantManagedSession $Expected -RequireVisible
+    } finally {$process.Dispose()}
+  } catch {return $false}
+}
+
 function Invoke-WallpaperAssistantTakeover([int]$ProcessId, [string]$StartedAt, [ValidateRange(0,3000)][int]$GraceMilliseconds=3000, [ValidateRange(0,2000)][int]$SettleMilliseconds=1500) {
-  $result = [ordered]@{schema=1;closed=$false;takenOver=$false;processId=$ProcessId;startedAt=$StartedAt;closeRequested=$false;windowRestored=$false}
+  $result = [ordered]@{schema=1;closed=$false;takenOver=$false;processId=$ProcessId;startedAt=$StartedAt;closeRequested=$false;windowRestored=$false;reusedManaged=$false}
   $mutex = Enter-WallpaperAssistantOperation
   if (-not $mutex) { $result.reason='operation_busy';return $result }
-  $root=$null
+  $root=$null;$managedSession=$null
   try {
     $context = Get-WallpaperAssistantContext
     $reason = Get-WallpaperAssistantEligibility $context $ProcessId $StartedAt
@@ -382,6 +509,17 @@ function Invoke-WallpaperAssistantTakeover([int]$ProcessId, [string]$StartedAt, 
       if($tree.Count -eq $previousCount){break}
       if($stabilize -eq 2){$result.reason='tree_changed';return $result}
       Wait-WallpaperAssistantDelay
+    }
+    $managed=@($context.roots|Where-Object kind -CEQ 'managed')
+    if($managed.Count -eq 1){
+      if(-not (Test-WallpaperAssistantConsent)){$result.reason='consent_revoked';return $result}
+      $managedSession=Get-WallpaperAssistantManagedSession $context $managed[0]
+      if(-not $managedSession -or -not (Restore-WallpaperAssistantManagedSession $managedSession)){$result.reason='managed_unavailable';return $result}
+      # Managed identity discovery can take time. Recheck the new ordinary root
+      # and all bystanders before its close, within the original fresh window.
+      $checked=Get-WallpaperAssistantTakeoverContext $root $tree
+      $context=$checked.context;$tree=@($checked.captured)
+      if($checked.reason){$result.reason=$checked.reason;return $result}
     }
     if (-not (Request-WallpaperAssistantClose $root)) { $result.reason=$(if(-not (Test-WallpaperAssistantConsent)){'consent_revoked'}else{'close_refused'});return $result }
     $result.closeRequested=$true
@@ -428,6 +566,7 @@ function Invoke-WallpaperAssistantTakeover([int]$ProcessId, [string]$StartedAt, 
     $result.reason='still_running';return $result
   } catch { $result.reason='operation_failed';return $result }
   finally {
+    if($result.takenOver -and $managedSession){try{$result.reusedManaged=[bool](Test-WallpaperAssistantManagedSession $managedSession -RequireVisible)}catch{}}
     if($result.closeRequested -and -not $result.takenOver -and $root){try{$result.windowRestored=[bool](Restore-WallpaperAssistantWindow $root)}catch{}}
     Exit-WallpaperAssistantOperation $mutex
   }

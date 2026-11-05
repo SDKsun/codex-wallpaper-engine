@@ -2,7 +2,8 @@
 param(
   [ValidateSet('Install','Uninstall')][string]$Action='Install',
   [string]$StateRoot,
-  [string]$RegistryPath='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+  [string]$RegistryPath='HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+  [switch]$PreserveActivation
 )
 $ErrorActionPreference='Stop'
 $assistantUtf8=New-Object Text.UTF8Encoding($false)
@@ -159,7 +160,12 @@ function Invoke-AssistantInstallation {
     if((Get-AssistantRecordHash $runBefore) -cne (Get-AssistantRecordHash $expectedRun)){throw 'Assistant Run value was privately edited; it was preserved.'}
   }
   if($configBefore){$settings=$assistantUtf8.GetString($configBefore)|ConvertFrom-Json;if(-not (Test-AssistantSettings $settings $installedRoot)){throw 'Private assistant configuration was preserved.'}}
-  $config=[ordered]@{schema=1;enabled=$true;paused=$false;launcherPath=$launcher}
+  # A payload upgrade changes paths, not the user's pause/disable decision.
+  # Explicit installation without this switch remains the opt-in action.
+  if($PreserveActivation -and (-not $journal -or -not $journal.active -or -not $configBefore)){throw 'Preserving activation requires an existing active assistant installation.'}
+  $enabled=if($PreserveActivation){$settings.enabled}else{$true}
+  $paused=if($PreserveActivation){$settings.paused}else{$false}
+  $config=[ordered]@{schema=1;enabled=$enabled;paused=$paused;launcherPath=$launcher}
   $configBytes=$assistantUtf8.GetBytes(($config|ConvertTo-Json -Compress))
   $ownedRun=[ordered]@{exists=$true;kind='String';value=('"'+$launcher+'" --assistant')}
   $previousConfig=if($journal){$journal.previousConfig}elseif($configBefore){[ordered]@{exists=$true;bytesBase64=[Convert]::ToBase64String($configBefore);sha256=$configBeforeHash}}else{[ordered]@{exists=$false;bytesBase64=$null;sha256=$null}}
@@ -177,7 +183,7 @@ function Invoke-AssistantInstallation {
     if($runWritten){try{Set-AssistantRunRecord $subKey $runBefore (Get-AssistantRecordHash $ownedRun)}catch{}}
     throw
   }
-  return [ordered]@{ok=$true;action='install';enabled=$true;paused=$false;launcherPath=$launcher;registryPath=$RegistryPath;valueName=$assistantValueName;configurationPath=$configPath}
+  return [ordered]@{ok=$true;action='install';enabled=$enabled;paused=$paused;launcherPath=$launcher;registryPath=$RegistryPath;valueName=$assistantValueName;configurationPath=$configPath}
 }
 
 if($MyInvocation.InvocationName -eq '.'){return}

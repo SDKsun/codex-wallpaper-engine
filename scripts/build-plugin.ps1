@@ -39,7 +39,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch does not apply.' }
 if ($LASTEXITCODE -ne 0) { throw 'Windows adapter patch failed.' }
 
 $windowsRoot = Join-Path $sourceRoot 'windows'
-foreach ($testName in @('managed-window-activation.tests.ps1','config-startup-rollback.tests.ps1','start-renderer-readiness.tests.ps1','start-verified-skin-preserved.tests.ps1')) {
+foreach ($testName in @('managed-window-activation.tests.ps1','config-startup-rollback.tests.ps1','start-renderer-readiness.tests.ps1','start-verified-skin-preserved.tests.ps1','start-existing-only.tests.ps1')) {
     & (Join-Path $windowsRoot "tests/$testName") -Root $windowsRoot
     if (-not $?) { throw "Windows startup checks failed: $testName" }
 }

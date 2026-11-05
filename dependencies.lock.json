@@ -37,7 +37,7 @@
     }
   },
   "patches": {
-    "plugins/gpt-wallpaper/patches/codex-scene-addon.patch": "4c6da7be413b912ed119f707b06af4f9ccd24094a35b839d31415b04d64cebb8",
+    "plugins/gpt-wallpaper/patches/codex-scene-addon.patch": "a2f2df41ecf0d70520e02a59a7921e94504a4680f3b5afc495543ba5776941a1",
     "plugins/gpt-wallpaper/patches/dsh-codex-adapter.patch": "f567dc16e0812c95744bf6ec5e165bc1d76ea39fc20ad1189d5ada5679ae5ad2",
     "plugins/gpt-wallpaper/patches/webwallgl-replacements.json": "a5c25e9f79d267ad2090979ac90e9e8bb58e7efecec808e4d30bd9a2284a9c51"
   }
